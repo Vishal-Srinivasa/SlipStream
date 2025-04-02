@@ -27,6 +27,7 @@ public class PageViewController {
     public String viewPage(@PathVariable String pageId, Model model) {
         try {
             Page page = pageService.getPage(pageId);
+            System.out.println(page);
             if (page != null) {
                 model.addAttribute("title", page.getTitle());
                 model.addAttribute("content", page.getContent());
@@ -35,6 +36,11 @@ public class PageViewController {
                 model.addAttribute("lastUpdated", page.getLastUpdated());
                 model.addAttribute("owner", page.getOwner());
                 model.addAttribute("children", page.getChildren());
+
+                System.out.println("Title: " + page.getTitle()); 
+                System.out.println("Content: " + page.getContent());
+
+                
                 return "page_template"; // This will look for page_template.html
             } else {
                 return "error";

@@ -75,6 +75,7 @@ public class PageController {
     
     @PutMapping("/{pageId}")
     public ResponseEntity<String> updatePageContent(@PathVariable String pageId, @RequestBody String newContent) {
+        System.out.println("In controller");
         try {
             boolean updated = pageService.updatePageContent(pageId, newContent);
             if (updated) {

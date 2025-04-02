@@ -1,4 +1,3 @@
-
 package com.example.SlipStream;
 
 import org.springframework.boot.SpringApplication;
