@@ -1,120 +1,3 @@
-// package com.example.SlipStream.service;
-
-// import java.util.List;
-// import java.util.concurrent.ExecutionException;
-
-// import org.springframework.beans.factory.annotation.Autowired;
-// import org.springframework.stereotype.Service;
-
-// import com.example.SlipStream.model.Page;
-// import com.example.SlipStream.repository.PageRepository;
-
-// @Service
-// public class PageService {
-
-//     private final PageRepository pageRepository;
-
-//     @Autowired
-//     public PageService(PageRepository pageRepository) {
-//         this.pageRepository = pageRepository;
-//     }
-
-//     public String createPage(Page page) throws ExecutionException, InterruptedException {
-//         return pageRepository.createPage(page);
-//     }
-
-//     public Page getPage(String pageId) throws ExecutionException, InterruptedException {
-//         return pageRepository.getPage(pageId);
-//     }
-
-//     public List<Page> getAllPages() throws ExecutionException, InterruptedException {
-//         return pageRepository.getAllPages();
-//     }
-
-//     public List<Page> getChildPages(String parentPageId) throws ExecutionException, InterruptedException {
-//         return pageRepository.getChildPages(parentPageId);
-//     }
-
-//     public boolean updatePageContent(String pageId, String newContent) throws ExecutionException, InterruptedException {
-//         return pageRepository.updatePageContent(pageId, newContent);
-//     }
-
-//     public boolean deletePage(String pageId) throws ExecutionException, InterruptedException {
-//         return pageRepository.deletePage(pageId);
-//     }
-// }
-
-
-// working 
-
-// package com.example.SlipStream.service;
-
-// import java.util.List;
-// import java.util.concurrent.ExecutionException;
-
-// import org.springframework.beans.factory.annotation.Autowired;
-// import org.springframework.stereotype.Service;
-
-// import com.example.SlipStream.model.ContainerPage;
-// import com.example.SlipStream.model.ContentPage;
-// import com.example.SlipStream.model.PageComponent;
-// import com.example.SlipStream.repository.PageRepository;
-
-// @Service
-// public class PageService {
-    
-//     private final PageRepository pageRepository;
-    
-//     @Autowired
-//     public PageService(PageRepository pageRepository) {
-//         this.pageRepository = pageRepository;
-//     }
-    
-//     public String createContentPage(String title, String content, String parentPageId, String owner) 
-//             throws ExecutionException, InterruptedException {
-//         ContentPage page = new ContentPage(title, content, parentPageId, owner);
-//         return pageRepository.createPage(page);
-//     }
-    
-//     public String createContainerPage(String title, String summary, String parentPageId, String owner) 
-//             throws ExecutionException, InterruptedException {
-//         ContainerPage page = new ContainerPage(title, summary, parentPageId, owner);
-//         return pageRepository.createPage(page);
-//     }
-    
-//     // Method to maintain compatibility with existing controller code
-//     public String createPage(PageComponent page) throws ExecutionException, InterruptedException {
-//         return pageRepository.createPage(page);
-//     }
-    
-//     public PageComponent getPage(String pageId) throws ExecutionException, InterruptedException {
-//         return pageRepository.getPage(pageId);
-//     }
-    
-//     public List<PageComponent> getAllPages() throws ExecutionException, InterruptedException {
-//         return pageRepository.getAllPages();
-//     }
-    
-//     public List<PageComponent> getChildPages(String parentPageId) throws ExecutionException, InterruptedException {
-//         return pageRepository.getChildPages(parentPageId);
-//     }
-    
-//     public boolean updatePageContent(String pageId, String newContent) throws ExecutionException, InterruptedException {
-//         return pageRepository.updatePageContent(pageId, newContent);
-//     }
-    
-//     public boolean deletePage(String pageId) throws ExecutionException, InterruptedException {
-//         return pageRepository.deletePage(pageId);
-//     }
-    
-//     // Helper method to determine if a page has children
-//     public boolean hasChildren(String pageId) throws ExecutionException, InterruptedException {
-//         List<PageComponent> children = getChildPages(pageId);
-//         return !children.isEmpty();
-//     }
-// }
-
-
 package com.example.SlipStream.service;
 
 import java.util.ArrayList;
@@ -187,50 +70,7 @@ public class PageService {
         
         return pageId;
     }
-    
-    /**
-     * Updates the parent-child relationship when a new page is created with a parent.
-     * If the parent is a content page, it will be converted to a container page.
-     */
-    // private void updateParentChildRelationship(String parentPageId, String childPageId) 
-    //         throws ExecutionException, InterruptedException {
-        
-    //     PageComponent parentPage = getPage(parentPageId);
-    //     PageComponent childPage = getPage(childPageId);
-        
-    //     if (parentPage == null || childPage == null) {
-    //         return;
-    //     }
-        
-    //     // If parent is a content page, convert it to a container page
-    //     if (parentPage.isLeaf()) {
-    //         ContentPage contentParent = (ContentPage) parentPage;
-            
-    //         // Create a new container page with the same properties
-    //         ContainerPage newContainerPage = new ContainerPage(
-    //             contentParent.getTitle(),
-    //             contentParent.getContent(), // Use content as summary
-    //             contentParent.getParentPageId(),
-    //             contentParent.getOwner()
-    //         );
-            
-    //         // Set the same ID
-    //         newContainerPage.setPageId(parentPageId);
-            
-    //         // Add the child to the new container
-    //         newContainerPage.addChild(childPage);
-            
-    //         // Update the page in Firebase - this will replace the content page with a container page
-    //         pageRepository.updatePage(newContainerPage);
-    //     } else if (parentPage instanceof ContainerPage) {
-    //         // Just add the child to the existing container
-    //         ContainerPage containerParent = (ContainerPage) parentPage;
-    //         containerParent.addChild(childPage);
-            
-    //         // Update the container page in Firebase
-    //         pageRepository.updatePage(containerParent);
-    //     }
-    // }
+
 
     // Modify the updateParentChildRelationship method in your PageService class
 /**
@@ -310,10 +150,7 @@ public class PageService {
     public List<PageComponent> getAllPages() throws ExecutionException, InterruptedException {
         return pageRepository.getAllPages();
     }
-    
-    // public List<PageComponent> getChildPages(String parentPageId) throws ExecutionException, InterruptedException {
-    //     return pageRepository.getChildPages(parentPageId);
-    // }
+
 
 
 
