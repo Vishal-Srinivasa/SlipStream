@@ -495,7 +495,7 @@
 
     const documentMarkdown = contentBlocks.map(block => {
         const content = block.querySelector('.block-content');
-        return content ? content.textContent.trim() : '';
+        return content ? content.textContent : '';
     }).filter(text => text !== '').join('\n\n');
 
     // Save to server using the correct URL format
@@ -872,18 +872,22 @@
         </div>
       `;
       document.body.appendChild(modal);
+      
       // Set focus on the title input
       setTimeout(() => {
         document.getElementById('page-title').focus();
       }, 100);
+      
       // Handle form submission
       document.getElementById('create-page-form').addEventListener('submit', (e) => {
         e.preventDefault();
         const title = document.getElementById('page-title').value.trim();
-        const parentId = window.currentPageId || null; // Get current page ID as parent
+        const pageIdMatch = window.location.pathname.match(/\/pages\/([^/]+)/);
+        const pageId = pageIdMatch ? String(pageIdMatch[1]) : null;
+        console.log("Page ID:", pageId);
         if (!title) return;
         
-        fetch(`/api/pages`, {
+        fetch('/api/pages', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -891,28 +895,36 @@
           body: JSON.stringify({
             title: title,
             content: `# ${title}`,
-            parentPage: parentId // Use parentPage instead of parent_id
+            parentPageId: pageId, // Changed from parentPage to parentPageId to match backend
+            type: 'content' // Always create as content page initially
           })
         })
-        .then(response => response.json())
+        .then(response => response.text())
         .then(data => {
-          if (data.status === 'success') {
-            document.body.removeChild(modal);
-            // If a current block was saved when the command was triggered, update it with a link icon
-            if (window.currentBlock) {
-              const placeholder = window.currentBlock.querySelector('.block-placeholder');
-              const linkIcon = document.createElement('a');
-              linkIcon.href = `/page/${data.page_id}`;
-              linkIcon.innerHTML = '📄';
-              linkIcon.title = 'Go to the new page';
-              placeholder.innerHTML = '';
-              placeholder.appendChild(linkIcon);
-            }
-            if (confirm('Page created! Do you want to open it now?')) {
-              window.location.href = `/pages/${data.page_id}`;
-            }
-          } else {
-            alert('Failed to create page.');
+          document.body.removeChild(modal);
+          
+          // If a current block was saved when the command was triggered, update it with a link icon
+          if (window.currentBlock) {
+            // Update placeholder with link icon
+            const placeholder = window.currentBlock.querySelector('.block-placeholder');
+            const linkIcon = document.createElement('a');
+            linkIcon.href = `/pages/${data}`;
+            linkIcon.innerHTML = '📄';
+            linkIcon.title = 'Go to the new page';
+            placeholder.innerHTML = '';
+            placeholder.appendChild(linkIcon);
+            
+            // Update content with markdown link
+            const content = window.currentBlock.querySelector('.block-content');
+            content.textContent = `[📄 ${title}](view/pages/${data})`;
+            
+            // Update the block type and rendered view
+            window.editor.updateBlockType(window.currentBlock);
+            window.editor.switchToRenderMode(window.currentBlock);
+        }
+          
+          if (confirm('Page created! Do you want to open it now?')) {
+            window.location.href = `view/pages/${data}`; // Changed to directly use the returned pageId
           }
         })
         .catch(error => {
@@ -920,6 +932,7 @@
           alert('An error occurred while creating the page.');
         });
       });
+      
       // Handle cancel button
       document.getElementById('cancel-page').addEventListener('click', () => {
         document.body.removeChild(modal);
