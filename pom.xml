@@ -115,6 +115,18 @@
 			<groupId>com.google.api-client</groupId>
 			<artifactId>google-api-client</artifactId>
 		</dependency>
+
+		<!-- Added WebSocket Dependency -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-websocket</artifactId>
+		</dependency>
+
+		<!-- Added Security Dependency -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -123,6 +135,15 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                </configuration>
+            </plugin>
 		</plugins>
 	</build>
 </project>

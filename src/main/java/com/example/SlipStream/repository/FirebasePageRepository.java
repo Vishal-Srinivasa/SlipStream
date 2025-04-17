@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
+import java.util.Collections;
 
 import org.springframework.stereotype.Repository;
 
@@ -217,7 +218,9 @@ public class FirebasePageRepository implements PageRepository {
         map.put("createdAt", page.getCreatedAt());
         map.put("lastUpdated", page.getLastUpdated());
         map.put("isLeaf", page.isLeaf());
-        
+        map.put("isPublished", page.isPublished());
+        map.put("sharingInfo", page.getSharingInfo() != null ? page.getSharingInfo() : new HashMap<>());
+
         // Content depends on page type
         map.put("content", page.getContent());
         
@@ -262,6 +265,11 @@ public class FirebasePageRepository implements PageRepository {
         component.setTitle((String) data.get("title"));
         component.setOwner((String) data.get("owner"));
         component.setParentPageId((String) data.get("parentPageId"));
+        component.setPublished(data.get("isPublished") != null ? (Boolean) data.get("isPublished") : false);
+        
+        // Handle sharingInfo
+        Map<String, String> sharingInfo = (Map<String, String>) data.get("sharingInfo");
+        component.setSharingInfo(sharingInfo != null ? sharingInfo : new HashMap<>());
         
         // Handle dates
         if (data.get("createdAt") != null) {

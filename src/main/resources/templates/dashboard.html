@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Slipstream</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .page-link {
+            text-decoration: none;
+            color: #333;
+            flex-grow: 1;
+            margin-right: 10px;
+        }
+        .page-link:hover {
+            text-decoration: underline;
+        }
+        .create-button {
+            display: inline-block;
+            padding: 10px 15px;
+            background-color: #28a745;
+            color: white;
+            border-radius: 5px;
+            text-decoration: none;
+            transition: background-color 0.2s;
+        }
+        .create-button:hover {
+            background-color: #218838;
+        }
+        .page-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+            padding: 8px 12px;
+            background-color: #f9f9f9;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
+        .delete-button {
+            padding: 4px 8px;
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+        .delete-button:hover {
+            background-color: #c82333;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-8">
+
+    <div class="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-3xl font-bold">Dashboard</h1>
+            <span class="text-gray-600" th:text="${currentUserEmail}">user@example.com</span>
+        </div>
+
+        <div th:if="${errorMessage}" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+            <strong class="font-bold">Error:</strong>
+            <span class="block sm:inline" th:text="${errorMessage}"></span>
+        </div>
+
+        <div class="mb-6">
+            <a th:href="@{/view/pages/create}" class="create-button">
+                <i class="fas fa-plus mr-1"></i> Create New Page
+            </a>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+                <h2 class="text-xl font-semibold mb-3 border-b pb-2">My Pages</h2>
+                <div th:if="${#lists.isEmpty(ownedPages)}">
+                    <p class="text-gray-500">You haven't created any pages yet.</p>
+                </div>
+                <div th:unless="${#lists.isEmpty(ownedPages)}">
+                    <ul>
+                        <li th:each="page : ${ownedPages}" th:id="'page-item-' + ${page.pageId}" class="page-item">
+                            <a th:href="@{'/view/pages/' + ${page.pageId}}"
+                               th:text="${page.title} ?: 'Untitled Page'"
+                               class="page-link">
+                                Page Title
+                            </a>
+                            <button th:if="${page.owner == currentUserEmail}"
+                                    th:data-page-id="${page.pageId}"
+                                    th:data-page-title="${page.title} ?: 'Untitled Page'"
+                                    th:onclick="deletePage(this, event)"
+                                    class="delete-button">
+                                <i class="fas fa-trash-alt"></i> Delete
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div>
+                <h2 class="text-xl font-semibold mb-3 border-b pb-2">Shared With Me</h2>
+                 <div th:if="${#lists.isEmpty(sharedPages)}">
+                    <p class="text-gray-500">No pages have been shared with you.</p>
+                </div>
+                <div th:unless="${#lists.isEmpty(sharedPages)}">
+                    <ul>
+                        <li th:each="page : ${sharedPages}" class="page-item">
+                            <a th:href="@{'/view/pages/' + ${page.pageId}}"
+                               th:text="${page.title} ?: 'Untitled Page'"
+                               class="page-link">
+                                Shared Page Title
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js"></script>
+
+    <script>
+        async function fetchWithAuth(url, options = {}) {
+            const defaultHeaders = {
+                'Content-Type': 'application/json',
+            };
+            const fetchOptions = {
+                ...options,
+                headers: {
+                    ...defaultHeaders,
+                    ...options.headers,
+                },
+            };
+            
+            const response = await fetch(url, fetchOptions);
+
+            if (response.status === 401 || response.status === 403) {
+                 console.error(`Authentication/Authorization error (${response.status}) for ${url}. Redirecting or showing error.`);
+                 alert(`Error: Access denied (${response.status}). Please ensure you are logged in and have permission.`);
+                 throw new Error(`Authentication required (status ${response.status})`);
+            }
+            
+            return response;
+        }
+
+        async function deletePage(buttonElement, event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const pageId = buttonElement.dataset.pageId;
+            const pageTitle = buttonElement.dataset.pageTitle;
+
+            if (confirm(`Are you sure you want to delete the page "${pageTitle}" and all its sub-pages? This action cannot be undone.`)) {
+                try {
+                    const response = await fetchWithAuth(`/api/pages/${pageId}`, {
+                        method: 'DELETE',
+                    });
+
+                    if (response.ok) {
+                        const deletedIds = await response.json();
+
+                        deletedIds.forEach(deletedId => {
+                            const listItem = document.getElementById(`page-item-${deletedId}`);
+                            if (listItem) {
+                                listItem.remove();
+                                console.log(`Removed page item ${deletedId} from dashboard.`);
+                            } else {
+                                console.log(`Page item ${deletedId} not found in the current view (might be a child not displayed).`);
+                            }
+                        });
+
+                        alert(`Page "${pageTitle}" and its sub-pages deleted successfully.`);
+
+                    } else if (response.status === 404) {
+                         alert(`Failed to delete page "${pageTitle}". Reason: Page not found.`);
+                    } else if (response.status === 403) {
+                         alert(`Failed to delete page "${pageTitle}". Reason: Access Denied.`);
+                    }
+                    else {
+                        const errorText = await response.text();
+                        alert(`Failed to delete page "${pageTitle}". Status: ${response.status}. Error: ${errorText || 'Unknown error'}`);
+                    }
+                } catch (error) {
+                    console.error('Error deleting page:', error);
+                    alert(`An error occurred while deleting the page "${pageTitle}": ${error.message}`);
+                }
+            }
+        }
+    </script>
+</body>
+</html>

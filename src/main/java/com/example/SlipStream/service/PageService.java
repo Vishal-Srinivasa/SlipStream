@@ -1,10 +1,16 @@
 package com.example.SlipStream.service;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
 import com.example.SlipStream.model.ContainerPage;
@@ -12,226 +18,457 @@ import com.example.SlipStream.model.ContentPage;
 import com.example.SlipStream.model.PageComponent;
 import com.example.SlipStream.repository.PageRepository;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+
 @Service
 public class PageService {
-    
+
+    private static final Logger logger = LoggerFactory.getLogger(PageService.class);
     private final PageRepository pageRepository;
-    
+    private final SimpMessagingTemplate messagingTemplate;
+
     @Autowired
-    public PageService(PageRepository pageRepository) {
+    public PageService(PageRepository pageRepository, SimpMessagingTemplate messagingTemplate) {
         this.pageRepository = pageRepository;
+        this.messagingTemplate = messagingTemplate;
     }
-    
-    /**
-     * Creates a content page and updates parent-child relationship if needed
-     */
-    public String createContentPage(String title, String content, String parentPageId, String owner) 
+
+    public String createContentPage(String title, String content, String parentPageId, String owner)
             throws ExecutionException, InterruptedException {
-        // Create the content page
-        ContentPage page = new ContentPage(title, content, parentPageId, owner);
+        String pageOwner = (owner != null && !owner.isEmpty()) ? owner : getCurrentUserEmail();
+        if (pageOwner == null) {
+            throw new IllegalStateException("Cannot create page without an authenticated owner.");
+        }
+        ContentPage page = new ContentPage(title, content, parentPageId, pageOwner);
         String pageId = pageRepository.createPage(page);
-        
-        // If parent exists, update the parent-child relationship
+        logger.info("Created Content Page: ID={}, Title='{}', Owner={}", pageId, title, pageOwner);
+
         if (parentPageId != null && !parentPageId.isEmpty()) {
             updateParentChildRelationship(parentPageId, pageId);
         }
-        
+
         return pageId;
     }
-    
-    /**
-     * Creates a container page and updates parent-child relationship if needed
-     */
-    public String createContainerPage(String title, String summary, String parentPageId, String owner) 
+
+    public String createContainerPage(String title, String summary, String parentPageId, String owner)
             throws ExecutionException, InterruptedException {
-        // Create the container page
-        ContainerPage page = new ContainerPage(title, summary, parentPageId, owner);
+        String pageOwner = (owner != null && !owner.isEmpty()) ? owner : getCurrentUserEmail();
+        if (pageOwner == null) {
+            throw new IllegalStateException("Cannot create page without an authenticated owner.");
+        }
+        ContainerPage page = new ContainerPage(title, summary, parentPageId, pageOwner);
         String pageId = pageRepository.createPage(page);
-        
-        // If parent exists, update the parent-child relationship
+        logger.info("Created Container Page: ID={}, Title='{}', Owner={}", pageId, title, pageOwner);
+
         if (parentPageId != null && !parentPageId.isEmpty()) {
             updateParentChildRelationship(parentPageId, pageId);
         }
-        
+
         return pageId;
     }
-    
-    /**
-     * Method to maintain compatibility with existing controller code
-     */
+
     public String createPage(PageComponent page) throws ExecutionException, InterruptedException {
         String pageId = pageRepository.createPage(page);
-        
-        // If parent exists, update the parent-child relationship
+
         String parentPageId = page.getParentPageId();
         if (parentPageId != null && !parentPageId.isEmpty()) {
             updateParentChildRelationship(parentPageId, pageId);
         }
-        
+
         return pageId;
     }
 
-
-    // Modify the updateParentChildRelationship method in your PageService class
-/**
-     * Updates the parent-child relationship when a new page is created with a parent.
-     * If the parent is a content page, it will be converted to a container page.
-     * Only stores the ID of the child page in the parent's childrenIds list.
-     */
-    private void updateParentChildRelationship(String parentPageId, String childPageId) 
+    private void updateParentChildRelationship(String parentPageId, String childPageId)
             throws ExecutionException, InterruptedException {
-        
+
         PageComponent parentPage = pageRepository.getPage(parentPageId);
-        
+
         if (parentPage == null) {
+            System.err.println("Warning: Parent page " + parentPageId + " not found when creating child " + childPageId);
             return;
         }
-        
-        // If parent is a content page, convert it to a container page
+
         if (parentPage.isLeaf()) {
             ContentPage contentParent = (ContentPage) parentPage;
-            
-            // Create a new container page with the same properties
+
             ContainerPage newContainerPage = new ContainerPage(
-                contentParent.getTitle(),
-                contentParent.getContent(), // Use content as summary
-                contentParent.getParentPageId(),
-                contentParent.getOwner()
+                    contentParent.getTitle(),
+                    contentParent.getContent(),
+                    contentParent.getParentPageId(),
+                    contentParent.getOwner()
             );
-            
-            // Set the same ID
+
             newContainerPage.setPageId(parentPageId);
-            
-            // Add only the child ID to the container
+            newContainerPage.setCreatedAt(parentPage.getCreatedAt());
+            newContainerPage.setSharingInfo(parentPage.getSharingInfo());
+            newContainerPage.setPublished(parentPage.isPublished());
+
             if (newContainerPage.getChildrenIds() == null) {
                 newContainerPage.setChildrenIds(new ArrayList<>());
             }
             newContainerPage.getChildrenIds().add(childPageId);
-            
-            // Update the page in the database
+
             pageRepository.updatePage(newContainerPage);
         } else if (parentPage instanceof ContainerPage) {
-            // Just add the child ID to the existing container
             ContainerPage containerParent = (ContainerPage) parentPage;
-            
-            // Make sure childrenIds is initialized
+
             if (containerParent.getChildrenIds() == null) {
                 containerParent.setChildrenIds(new ArrayList<>());
             }
-            
-            // Add the child ID if it's not already in the list
+
             if (!containerParent.getChildrenIds().contains(childPageId)) {
                 containerParent.getChildrenIds().add(childPageId);
-                
-                // Update the container page in the database
+
                 pageRepository.updatePage(containerParent);
             }
         }
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
     public PageComponent getPage(String pageId) throws ExecutionException, InterruptedException {
-        return pageRepository.getPage(pageId);
+        PageComponent page = pageRepository.getPage(pageId);
+        if (page == null) {
+            return null;
+        }
+
+        String currentUserEmail = getCurrentUserEmail();
+        if (!hasAccess(page, currentUserEmail, "view")) {
+            logger.warn("Access Denied: User '{}' attempted to view page '{}' (Published: {}, Owner: {}) without permission.",
+                    currentUserEmail != null ? currentUserEmail : "anonymous",
+                    pageId, page.isPublished(), page.getOwner());
+            throw new AccessDeniedException("User " + (currentUserEmail != null ? currentUserEmail : "anonymous") + " does not have view access to page " + pageId);
+        }
+        logger.debug("Access Granted: User '{}' viewing page '{}'.", currentUserEmail != null ? currentUserEmail : "anonymous", pageId);
+        return page;
     }
-    
+
+    public PageComponent getPageForEditing(String pageId) throws ExecutionException, InterruptedException {
+        PageComponent page = pageRepository.getPage(pageId);
+        if (page == null) {
+            return null;
+        }
+
+        String currentUserEmail = getCurrentUserEmail();
+        if (!hasAccess(page, currentUserEmail, "edit")) {
+            logger.warn("Access Denied: User '{}' attempted to edit page '{}' (Owner: {}) without permission.",
+                    currentUserEmail != null ? currentUserEmail : "anonymous",
+                    pageId, page.getOwner());
+            throw new AccessDeniedException("User " + (currentUserEmail != null ? currentUserEmail : "anonymous") + " does not have edit access to page " + pageId);
+        }
+        logger.debug("Edit Access Granted: User '{}' editing page '{}'.", currentUserEmail, pageId);
+        return page;
+    }
+
+    private String getCurrentUserEmail() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.isAuthenticated() &&
+                authentication.getPrincipal() != null &&
+                !"anonymousUser".equals(authentication.getPrincipal().toString())) {
+            Object principal = authentication.getPrincipal();
+            if (principal instanceof UserDetails) {
+                return ((UserDetails) principal).getUsername();
+            } else {
+                return authentication.getName();
+            }
+        }
+        logger.trace("No authenticated user found, returning null for current user email.");
+        return null;
+    }
+
+    private boolean hasAccess(PageComponent page, String userEmail, String requiredAccessLevel) throws ExecutionException, InterruptedException {
+        if (page == null) {
+            logger.trace("hasAccess check failed: Page is null.");
+            return false;
+        }
+
+        if (userEmail != null && userEmail.equals(page.getOwner())) {
+            logger.trace("hasAccess check passed for page '{}': User '{}' is owner.", page.getPageId(), userEmail);
+            return true;
+        }
+
+        if (page.isPublished() && "view".equals(requiredAccessLevel)) {
+            logger.trace("hasAccess check passed for page '{}': Page is published and required access is 'view'.", page.getPageId());
+            return true;
+        }
+
+        if (userEmail != null && page.getSharingInfo() != null) {
+            String grantedAccess = page.getSharingInfo().get(userEmail);
+            if (grantedAccess != null) {
+                if ("edit".equals(grantedAccess)) {
+                    logger.trace("hasAccess check passed for page '{}': User '{}' has 'edit' access via sharing.", page.getPageId(), userEmail);
+                    return true;
+                } else if ("view".equals(grantedAccess) && "view".equals(requiredAccessLevel)) {
+                    logger.trace("hasAccess check passed for page '{}': User '{}' has 'view' access via sharing.", page.getPageId(), userEmail);
+                    return true;
+                }
+            }
+        }
+
+        if (page.getParentPageId() != null && !page.getParentPageId().isEmpty()) {
+            logger.trace("Checking inherited access for page '{}' via parent '{}'.", page.getPageId(), page.getParentPageId());
+            try {
+                PageComponent parentPage = pageRepository.getPage(page.getParentPageId());
+                if (parentPage != null) {
+                    return hasAccess(parentPage, userEmail, requiredAccessLevel);
+                } else {
+                    logger.warn("Parent page '{}' not found during inherited access check for page '{}'.", page.getParentPageId(), page.getPageId());
+                }
+            } catch (Exception e) {
+                logger.error("Error checking parent page access for page '{}': {}", page.getPageId(), e.getMessage());
+                return false;
+            }
+        }
+
+        logger.trace("hasAccess check failed for page '{}': No applicable access rules matched for user '{}' requiring '{}'.", page.getPageId(), userEmail != null ? userEmail : "anonymous", requiredAccessLevel);
+        return false;
+    }
+
     public List<PageComponent> getAllPages() throws ExecutionException, InterruptedException {
         return pageRepository.getAllPages();
     }
 
+    public List<PageComponent> getChildPages(String parentPageId) throws ExecutionException, InterruptedException {
+        PageComponent parent = getPage(parentPageId);
+        if (parent == null || parent.isLeaf()) {
+            return new ArrayList<>();
+        }
 
+        ContainerPage containerParent = (ContainerPage) parent;
+        List<String> childIds = containerParent.getChildrenIds();
+        List<PageComponent> children = new ArrayList<>();
 
+        for (String childId : childIds) {
+            PageComponent child = pageRepository.getPage(childId);
+            if (child != null) {
+                children.add(child);
+            }
+        }
 
+        containerParent.setLoadedChildren(children);
 
-
-
-
-    // Add or update this method to properly load children when needed
-public List<PageComponent> getChildPages(String parentPageId) throws ExecutionException, InterruptedException {
-    PageComponent parent = getPage(parentPageId);
-    
-    if (parent == null || parent.isLeaf()) {
-        return new ArrayList<>();
+        return children;
     }
-    
-    ContainerPage containerParent = (ContainerPage) parent;
-    List<String> childIds = containerParent.getChildrenIds();
-    List<PageComponent> children = new ArrayList<>();
-    
-    for (String childId : childIds) {
-        PageComponent child = getPage(childId);
-        if (child != null) {
-            children.add(child);
+
+    public boolean updatePage(String pageId, String newTitle, String newContent) throws ExecutionException, InterruptedException {
+        PageComponent page = getPageForEditing(pageId);
+        if (page == null) {
+            logger.warn("Attempted to update non-existent or inaccessible page: {}", pageId);
+            return false;
+        }
+
+        boolean changed = false;
+
+        if (newTitle != null && !newTitle.equals(page.getTitle())) {
+            page.setTitle(newTitle);
+            changed = true;
+            logger.debug("Updating title for page {}: '{}'", pageId, newTitle);
+        }
+
+        String currentContent = page.getContent();
+        if (newContent != null && !newContent.equals(currentContent)) {
+             if (page.isLeaf() && page instanceof ContentPage) {
+                 ((ContentPage) page).setContent(newContent);
+                 changed = true;
+                 logger.debug("Updating content for ContentPage {}", pageId);
+             } else if (!page.isLeaf() && page instanceof ContainerPage) {
+                 ((ContainerPage) page).setSummary(newContent);
+                 changed = true;
+                 logger.debug("Updating summary for ContainerPage {}", pageId);
+             } else {
+                 logger.warn("Attempted to update content/summary on unexpected page type for page {}", pageId);
+             }
+        }
+
+        if (changed) {
+            page.setLastUpdated(new Date());
+            boolean success = pageRepository.updatePage(page);
+            if (success) {
+                logger.info("Successfully updated page {}", pageId);
+            } else {
+                logger.error("Repository failed to update page {}", pageId);
+            }
+            return success;
+        } else {
+            logger.info("No changes detected for page {}, skipping update.", pageId);
+            return true;
         }
     }
-    
-    // Set the loaded children on the parent for future in-memory operations
-    containerParent.setLoadedChildren(children);
-    
-    return children;
-}
-    
+
+    @Deprecated
     public boolean updatePageContent(String pageId, String newContent) throws ExecutionException, InterruptedException {
-        return pageRepository.updatePageContent(pageId, newContent);
-    }
-    
-    /**
-     * Deletes a page and all its child pages
-     */
-    public boolean deletePage(String pageId) throws ExecutionException, InterruptedException {
-        // Before deleting, check if this page has children
-        List<PageComponent> children = getChildPages(pageId);
-        
-        // If has children, delete all children first (recursive approach)
-        for (PageComponent child : children) {
-            deletePage(child.getPageId());
+        PageComponent page = getPageForEditing(pageId);
+        if (page == null) {
+            return false;
         }
-        
-        return pageRepository.deletePage(pageId);
+
+        boolean changed = false;
+        String currentContent = page.getContent();
+        if (newContent != null && !newContent.equals(currentContent)) {
+            if (page.isLeaf() && page instanceof ContentPage) {
+                ((ContentPage) page).setContent(newContent);
+                changed = true;
+            } else if (!page.isLeaf() && page instanceof ContainerPage) {
+                ((ContainerPage) page).setSummary(newContent);
+                changed = true;
+            }
+        }
+
+        if (changed) {
+             page.setLastUpdated(new Date());
+             return pageRepository.updatePage(page);
+        }
+        return true;
     }
-    
-    /**
-     * Checks if a page has children
-     */
+
+    public List<String> deletePage(String pageId) throws ExecutionException, InterruptedException {
+        PageComponent pageToDelete;
+        try {
+            pageToDelete = getPageForEditing(pageId);
+        } catch (AccessDeniedException e) {
+            logger.warn("Access denied for deleting page {}: {}", pageId, e.getMessage());
+            throw e;
+        } catch (Exception e) {
+             logger.error("Error fetching page {} for deletion check: {}", pageId, e.getMessage());
+             return Collections.emptyList();
+        }
+
+        if (pageToDelete == null) {
+            logger.warn("Attempted to delete non-existent or inaccessible page: {}", pageId);
+            return Collections.emptyList();
+        }
+
+        List<String> deletedIds = new ArrayList<>();
+        return deletePageRecursive(pageToDelete, deletedIds);
+    }
+
+    private List<String> deletePageRecursive(PageComponent pageToDelete, List<String> deletedIds) throws ExecutionException, InterruptedException {
+        String pageId = pageToDelete.getPageId();
+        String parentId = pageToDelete.getParentPageId();
+
+        if (!pageToDelete.isLeaf() && pageToDelete instanceof ContainerPage) {
+            ContainerPage containerPage = (ContainerPage) pageToDelete;
+            List<String> childIds = containerPage.getChildrenIds();
+            if (childIds != null && !childIds.isEmpty()) {
+                List<String> childIdsCopy = new ArrayList<>(childIds);
+                for (String childId : childIdsCopy) {
+                    try {
+                        PageComponent childPage = pageRepository.getPage(childId);
+                        if (childPage != null) {
+                            deletePageRecursive(childPage, deletedIds);
+                        } else {
+                             logger.warn("Child page {} not found during recursive delete of parent {}.", childId, pageId);
+                        }
+                    } catch (AccessDeniedException e) {
+                        logger.warn("Access denied while trying to recursively delete child page {}. Skipping deletion of this child.", childId);
+                    } catch (Exception e) {
+                        logger.error("Error recursively deleting child page {}: {}", childId, e.getMessage());
+                    }
+                }
+            }
+        }
+
+        if (parentId != null && !parentId.isEmpty()) {
+            try {
+                PageComponent parentPage = pageRepository.getPage(parentId);
+                if (parentPage != null && !parentPage.isLeaf() && parentPage instanceof ContainerPage) {
+                    ContainerPage containerParent = (ContainerPage) parentPage;
+                    boolean removed = containerParent.getChildrenIds().remove(pageId);
+                    if (removed) {
+                        pageRepository.updatePage(containerParent);
+                        logger.debug("Removed child {} from parent {}", pageId, parentId);
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("Error updating parent page {} after deleting child {}: {}", parentId, pageId, e.getMessage());
+            }
+        }
+
+        boolean deleted = pageRepository.deletePage(pageId);
+
+        if (deleted) {
+            logger.info("Successfully deleted page: ID={}, Title='{}'", pageId, pageToDelete.getTitle());
+            deletedIds.add(pageId);
+
+            if (parentId != null && !parentId.isEmpty()) {
+                String destination = "/topic/pages/" + parentId + "/children/deleted";
+                logger.info("Sending WebSocket message to {}: {}", destination, pageId);
+                messagingTemplate.convertAndSend(destination, pageId);
+            }
+
+        } else {
+             logger.error("Repository failed to delete page {}", pageId);
+        }
+
+        return deletedIds;
+    }
+
     public boolean hasChildren(String pageId) throws ExecutionException, InterruptedException {
         List<PageComponent> children = getChildPages(pageId);
         return !children.isEmpty();
     }
-    
-    /**
-     * Converts a content page to a container page
-     */
+
     public boolean convertToContainerPage(String pageId) throws ExecutionException, InterruptedException {
         PageComponent page = getPage(pageId);
-        
+
         if (page == null || !page.isLeaf()) {
-            return false; // Either page doesn't exist or is already a container
+            return false;
         }
-        
+
         ContentPage contentPage = (ContentPage) page;
-        
-        // Create a container page with the same properties
+
         ContainerPage containerPage = new ContainerPage(
-            contentPage.getTitle(),
-            contentPage.getContent(), // Use content as summary
-            contentPage.getParentPageId(),
-            contentPage.getOwner()
+                contentPage.getTitle(),
+                contentPage.getContent(),
+                contentPage.getParentPageId(),
+                contentPage.getOwner()
         );
         containerPage.setPageId(pageId);
-        
-        // Update the page in Firebase
+
         return pageRepository.updatePage(containerPage);
+    }
+
+    public boolean sharePage(String pageId, String userEmailToShareWith, String accessLevel) throws ExecutionException, InterruptedException {
+        if (!"view".equals(accessLevel) && !"edit".equals(accessLevel)) {
+            throw new IllegalArgumentException("Invalid access level. Must be 'view' or 'edit'.");
+        }
+
+        PageComponent page = getPageForEditing(pageId);
+        if (page == null) {
+            return false;
+        }
+
+        page.addShare(userEmailToShareWith, accessLevel);
+        return pageRepository.updatePage(page);
+    }
+
+    public boolean unsharePage(String pageId, String userEmailToUnshare) throws ExecutionException, InterruptedException {
+        PageComponent page = getPageForEditing(pageId);
+        if (page == null) {
+            return false;
+        }
+
+        page.removeShare(userEmailToUnshare);
+        return pageRepository.updatePage(page);
+    }
+
+    public boolean publishPage(String pageId) throws ExecutionException, InterruptedException {
+        PageComponent page = getPageForEditing(pageId);
+        if (page == null) {
+            return false;
+        }
+
+        page.setPublished(true);
+        return pageRepository.updatePage(page);
+    }
+
+    public boolean unpublishPage(String pageId) throws ExecutionException, InterruptedException {
+        PageComponent page = getPageForEditing(pageId);
+        if (page == null) {
+            return false;
+        }
+
+        page.setPublished(false);
+        return pageRepository.updatePage(page);
     }
 }
