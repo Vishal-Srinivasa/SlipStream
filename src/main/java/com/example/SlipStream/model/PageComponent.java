@@ -22,13 +22,13 @@ public abstract class PageComponent {
     public PageComponent() {
         this.createdAt = new Date();
         this.lastUpdated = new Date();
-        this.isPublished = false;
-        this.sharingInfo = new HashMap<>();
+        this.isPublished = false; // Default to not published
+        this.sharingInfo = new HashMap<>(); // Initialize sharing info
     }
 
     // Constructor with common fields
     public PageComponent(String title, String owner, String parentPageId) {
-        this();
+        this(); // Call default constructor to initialize date, published status, and sharing map
         this.title = title;
         this.owner = owner;
         this.parentPageId = parentPageId;
@@ -101,6 +101,7 @@ public abstract class PageComponent {
     }
 
     public Map<String, String> getSharingInfo() {
+        // Ensure sharingInfo is never null when accessed
         if (this.sharingInfo == null) {
             this.sharingInfo = new HashMap<>();
         }
@@ -115,22 +116,28 @@ public abstract class PageComponent {
     // Helper methods for sharing
     public void addShare(String userEmail, String accessLevel) {
         if (this.sharingInfo == null) {
-            this.sharingInfo = new HashMap<>();
+             this.sharingInfo = new HashMap<>();
         }
-        this.sharingInfo.put(userEmail, accessLevel);
-        this.lastUpdated = new Date();
+        // Basic validation for access level
+        if ("view".equals(accessLevel) || "edit".equals(accessLevel)) {
+            this.sharingInfo.put(userEmail, accessLevel);
+            this.lastUpdated = new Date();
+        } else {
+            // Optionally throw an exception or log a warning for invalid level
+            System.err.println("Attempted to add share with invalid access level: " + accessLevel);
+        }
     }
 
     public void removeShare(String userEmail) {
         if (this.sharingInfo != null) {
-            this.sharingInfo.remove(userEmail);
-            this.lastUpdated = new Date();
+             this.sharingInfo.remove(userEmail);
+             this.lastUpdated = new Date();
         }
     }
 
     public String getAccessLevel(String userEmail) {
         if (this.sharingInfo == null) {
-            return null;
+             return null; // Or Optional.empty()
         }
         return this.sharingInfo.get(userEmail);
     }

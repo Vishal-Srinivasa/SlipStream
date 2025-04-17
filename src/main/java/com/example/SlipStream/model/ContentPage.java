@@ -19,7 +19,7 @@ public class ContentPage extends PageComponent {
 
     // Constructor with fields
     public ContentPage(String title, String content, String parentPageId, String owner) {
-        super(title, owner, parentPageId);
+        super(title, owner, parentPageId); // Call super constructor
         this.content = content;
     }
 
@@ -30,22 +30,24 @@ public class ContentPage extends PageComponent {
 
     public void setContent(String content) {
         this.content = content;
-        this.lastUpdated = new Date();
+        this.lastUpdated = new Date(); // Update timestamp when content changes
     }
 
     @Override
     public List<PageComponent> getChildren() {
-        return Collections.emptyList(); // Leaf nodes have no children
+        return Collections.emptyList(); // Leaf node has no children
     }
 
     @Override
     public void addChild(PageComponent component) {
-        throw new UnsupportedOperationException("Cannot add children to a content page");
+        // Cannot add children to a leaf node
+        throw new UnsupportedOperationException("Cannot add child to a ContentPage");
     }
 
     @Override
     public void removeChild(String componentId) {
-        throw new UnsupportedOperationException("Cannot remove children from a content page");
+        // Cannot remove children from a leaf node
+        throw new UnsupportedOperationException("Cannot remove child from a ContentPage");
     }
 
     @Override

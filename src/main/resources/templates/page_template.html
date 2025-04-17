@@ -9,6 +9,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js"></script>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
 </head>
 
 <style>
@@ -112,17 +114,6 @@
     font-size: 12px;
     color: #888;
   }
-  #save-button {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background-color: #4CAF50;
-    color: white;
-    padding: 10px 20px;
-    border-radius: 5px;
-    cursor: pointer;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-  }
   .code-block {
     background-color: rgba(135, 131, 120, 0.15);
     font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
@@ -170,7 +161,6 @@
     margin-top: 0;
     margin-bottom: 0;
   }
-  /* Added rules for rendered headings */
   .markdown-rendered h1 {
     font-size: 1.875rem;
     font-weight: 600;
@@ -300,31 +290,41 @@
   #shared-users-list { list-style: none; padding: 0; margin-top: 15px; }
   #shared-users-list li { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #eee; }
   .remove-share-button { background: #dc3545; color: white; border: none; padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 12px; }
-  /* Style for sub-page blocks to visually distinguish if needed */
   .block[data-subpage-id] {
-    /* Example: slightly different background or border */
-    /* background-color: #f0f8ff; */
   }
   .block[data-subpage-id] .block-content {
-    /* Prevent direct editing appearance if desired, though blur handles restoration */
-    /* cursor: default; */
+  }
+  #save-status {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.8rem;
+    color: #888;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background-color: rgba(240, 240, 240, 0.8);
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+  }
+  #save-status.visible {
+    opacity: 1;
   }
 </style>
 
 <body>
   <div id="presence-icons">
-    <!-- Icons will be added dynamically -->
   </div>
 
   <button id="share-button" th:if="${canEdit}">Share</button>
 
+  <div id="save-status"></div>
+
   <div id="editor-container">
     <div id="editor">
-      <!-- Blocks will be dynamically added here -->
     </div>
   </div>
-
-  <button id="save-button" th:if="${canEdit}">Save Document</button>
 
   <div id="command-menu" class="command-menu">
     <div class="command-item" data-type="h1">
@@ -411,16 +411,15 @@
   </div>
 
   <script th:inline="javascript">
-    // Ensure defaults are safe if backend data is missing unexpectedly
     window.PAGE_ID = /*[[${pageId}]]*/ null;
-    window.PAGE_TITLE = /*[[${title}]]*/ "Untitled"; // Provide default title
+    window.PAGE_TITLE = /*[[${title}]]*/ "Untitled";
     window.PAGE_CONTENT = /*[[${content}]]*/ "";
     window.IS_PUBLISHED = /*[[${isPublished}]]*/ false;
     window.SHARING_INFO = /*[[${sharingInfo}]]*/ {};
     window.CAN_EDIT = /*[[${canEdit}]]*/ false;
     window.PAGE_OWNER = /*[[${owner}]]*/ null;
+    window.CURRENT_USER_EMAIL = /*[[${currentUserEmail}]]*/ null;
 
-    // Log received data for debugging frontend issues
     console.log("Page Data Received:", {
         pageId: window.PAGE_ID,
         title: window.PAGE_TITLE,
@@ -428,15 +427,13 @@
         canEdit: window.CAN_EDIT,
         owner: window.PAGE_OWNER,
         sharingInfo: window.SHARING_INFO
-        // content omitted for brevity
     });
   /*]]>*/
 </script>
 
   <script>
     async function fetchWithAuth(url, options = {}) {
-        // Add authentication headers if necessary (e.g., Bearer token)
-        const token = localStorage.getItem('firebaseIdToken'); // Assuming token is stored in localStorage
+        const token = localStorage.getItem('firebaseIdToken');
         const defaultHeaders = {
             'Content-Type': 'application/json',
         };
@@ -454,7 +451,6 @@
 
         const response = await fetch(url, fetchOptions);
 
-        // Basic check for auth errors, adjust as needed for your auth flow
         if (response.status === 401 || response.status === 403) {
              console.error(`Authentication/Authorization error (${response.status}) for ${url}. Redirecting or showing error.`);
              alert(`Error: Access denied (${response.status}). Please ensure you are logged in and have permission.`);
@@ -466,37 +462,44 @@
   </script>
 
   <script>
-    // WebSocket connection and subscription
     let stompClient = null;
 
     function connectWebSocket() {
-        const socket = new SockJS('/ws'); // Ensure this matches your WebSocket endpoint config
+        const socket = new SockJS('/ws');
         stompClient = Stomp.over(socket);
 
         stompClient.connect({}, function (frame) {
             console.log('Connected to WebSocket: ' + frame);
 
-            // Subscribe to child deletion events for the current page
-            const subscriptionUrl = `/topic/pages/${window.PAGE_ID}/children/deleted`;
-            console.log("Subscribing to:", subscriptionUrl);
-
-            stompClient.subscribe(subscriptionUrl, function (message) {
+            const childDeleteSubUrl = `/topic/pages/${window.PAGE_ID}/children/deleted`;
+            console.log("Subscribing to child deletions:", childDeleteSubUrl);
+            stompClient.subscribe(childDeleteSubUrl, function (message) {
                 const deletedChildId = message.body;
                 console.log(`[WebSocket] Received child deletion message for ID: ${deletedChildId}`);
                 handleChildDeletion(deletedChildId);
             });
 
+            const pageUpdateSubUrl = `/topic/pages/${window.PAGE_ID}`;
+            console.log("Subscribing to page updates:", pageUpdateSubUrl);
+            stompClient.subscribe(pageUpdateSubUrl, function (message) {
+                 try {
+                    const updateData = JSON.parse(message.body);
+                    console.log(`[WebSocket] Received page update message:`, updateData);
+                    handlePageUpdate(updateData);
+                 } catch (e) {
+                    console.error("Error parsing page update message:", e, message.body);
+                 }
+            });
+
         }, function(error) {
             console.error('STOMP error: ' + error);
-            // Optional: Implement reconnection logic here
-            setTimeout(connectWebSocket, 5000); // Try to reconnect after 5 seconds
+            setTimeout(connectWebSocket, 5000);
         });
 
-        // Handle socket closure
         socket.onclose = function() {
             console.log('WebSocket connection closed. Attempting to reconnect...');
-            stompClient = null; // Ensure client is reset
-            setTimeout(connectWebSocket, 5000); // Try to reconnect after 5 seconds
+            stompClient = null;
+            setTimeout(connectWebSocket, 5000);
         };
     }
 
@@ -513,8 +516,6 @@
             console.log(`[handleChildDeletion] Found block element, attempting deletion:`, blockToRemove);
             window.editor.deleteBlock(blockToRemove);
 
-            // --- Verification Step ---
-            // Use setTimeout to allow DOM update cycle
             setTimeout(() => {
                 const blockStillExists = document.querySelector(blockSelector);
                 if (blockStillExists) {
@@ -522,11 +523,65 @@
                 } else {
                     console.log(`[handleChildDeletion] Verification PASSED: Block ${deletedChildId} successfully removed from DOM.`);
                 }
-            }, 100); // Short delay for verification
-            // --- End Verification ---
+            }, 100);
 
         } else {
             console.warn(`[handleChildDeletion] Block for deleted child ${deletedChildId} not found in the current view.`);
+        }
+    }
+
+    function handlePageUpdate(updateData) {
+        console.log("[handlePageUpdate] Processing update:", updateData);
+
+        let needsReload = false;
+
+        if (updateData.title && updateData.title !== window.PAGE_TITLE) {
+            console.log(`[handlePageUpdate] Title changed from "${window.PAGE_TITLE}" to "${updateData.title}"`);
+            window.PAGE_TITLE = updateData.title;
+            document.title = updateData.title;
+            const titleBlockContent = document.querySelector('#editor .block .block-content.text-3xl');
+            if (titleBlockContent && titleBlockContent.textContent !== updateData.title) {
+                 if (document.activeElement !== titleBlockContent) {
+                    titleBlockContent.textContent = updateData.title;
+                    const renderedTitle = titleBlockContent.nextElementSibling;
+                    if (renderedTitle && renderedTitle.classList.contains('markdown-rendered')) {
+                        renderedTitle.innerHTML = window.editor.converter.makeHtml(updateData.title);
+                    }
+                 } else {
+                     console.log("[handlePageUpdate] Title block is focused, skipping DOM update to avoid disruption.");
+                 }
+            }
+        }
+
+        if (updateData.content !== undefined && updateData.content !== window.PAGE_CONTENT) {
+             console.log("[handlePageUpdate] Content changed, scheduling editor reload.");
+             window.PAGE_CONTENT = updateData.content;
+             needsReload = true;
+        }
+
+        if (updateData.sharingInfo) {
+            window.SHARING_INFO = updateData.sharingInfo;
+            const shareModal = document.getElementById('share-modal');
+            if (shareModal && shareModal.style.display === 'block') {
+                console.log("[handlePageUpdate] Refreshing open share modal.");
+                populateShareModal();
+            }
+        }
+        if (updateData.isPublished !== undefined && updateData.isPublished !== window.IS_PUBLISHED) {
+            window.IS_PUBLISHED = updateData.isPublished;
+            const shareModal = document.getElementById('share-modal');
+            if (shareModal && shareModal.style.display === 'block') {
+                console.log("[handlePageUpdate] Refreshing open share modal due to publish status change.");
+                populateShareModal();
+            }
+        }
+
+        if (needsReload && window.editor) {
+            console.log("[handlePageUpdate] Reloading editor content...");
+            window.editor.initializeEditor();
+            console.log("[handlePageUpdate] Editor content reloaded.");
+        } else if (needsReload) {
+             console.warn("[handlePageUpdate] Content changed but editor instance not found.");
         }
     }
 
@@ -544,6 +599,10 @@
         this.activeBlock = null;
         this.isInEditMode = true;
         this.blockTypes = new Map();
+        this.saveTimeout = null;
+        this.debounceDelay = 1500;
+        this.saveStatusElement = document.getElementById('save-status');
+        this.clearStatusTimeout = null;
 
         this.initializeEditor();
         this.setupEventListeners();
@@ -558,7 +617,6 @@
         if (!window.PAGE_ID) {
             console.error("Page ID is missing. Cannot initialize editor correctly.");
             this.container.innerHTML = '<p style="color: red;">Error: Page data could not be loaded.</p>';
-            document.getElementById('save-button')?.remove();
             document.getElementById('share-button')?.remove();
             return;
         }
@@ -575,12 +633,7 @@
         }
 
         if (window.CAN_EDIT) {
-            const saveBtn = document.getElementById('save-button');
-            if (saveBtn) {
-                saveBtn.addEventListener('click', () => this.saveDocument());
-            } else {
-                 console.warn("Save button not found, cannot attach listener.");
-            }
+            console.log("Auto-save enabled.");
         } else {
             this.container.querySelectorAll('[contenteditable="true"]').forEach(el => {
                 el.setAttribute('contenteditable', 'false');
@@ -749,16 +802,20 @@
 
       async saveDocument() {
         if (!window.CAN_EDIT) {
-          alert("You do not have permission to save changes to this page.");
+          console.log("Save prevented: User does not have edit permission.");
           return;
         }
 
         const pageId = window.PAGE_ID;
 
         if (!pageId) {
-          alert('Could not determine page ID.');
+          console.error('Auto-save failed: Could not determine page ID.');
+          this.updateSaveStatus("Save failed (no ID)", true);
           return;
         }
+
+        this.updateSaveStatus("Saving...");
+        console.log(`Auto-saving page ${pageId}...`);
 
         const blocks = Array.from(this.container.querySelectorAll('.block'));
         let title = window.PAGE_TITLE;
@@ -814,18 +871,19 @@
             const data = await response.text();
 
             if (!response.ok) {
-                throw new Error(data || `HTTP error! status: ${response.status}`);
+                console.error(`Auto-save failed for page ${pageId}. Status: ${response.status}, Response: ${data}`);
+                this.updateSaveStatus("Save failed", true);
             } else {
-                console.log("Response from server:", data);
-                document.title = title;
-                window.PAGE_TITLE = title;
-                alert('Page saved successfully!');
+                console.log(`Auto-save successful for page ${pageId}. Server response: ${data}`);
+                this.updateSaveStatus("Saved", true);
+                if (document.title !== title) {
+                    document.title = title;
+                    window.PAGE_TITLE = title;
+                }
             }
         } catch (error) {
-            if (!error.message.startsWith("Authentication required")) {
-                console.error('Error:', error);
-                alert(`An error occurred while saving the page: ${error.message}`);
-            }
+            console.error(`Auto-save fetch error for page ${pageId}:`, error);
+            this.updateSaveStatus("Save failed", true);
         }
       }
 
@@ -850,11 +908,11 @@
         if (renderedContent) {
           renderedContent.classList.add('hidden');
         }
-        this.setActiveBlock(block); // Set active before focusing
+        this.setActiveBlock(block);
 
         setTimeout(() => {
             content.focus();
-            this.placeCursorAtEnd(content); // Ensure cursor is placed
+            this.placeCursorAtEnd(content);
             console.log(`[switchToEditMode] Switched block ${block.id || '(no id)'} to edit mode and focused.`);
         }, 0);
       }
@@ -905,6 +963,16 @@
         } else if (!text.startsWith('/')) {
           this.hideCommandMenu();
           this.updateBlockType(block);
+        }
+
+        if (window.CAN_EDIT) {
+            clearTimeout(this.saveTimeout);
+            clearTimeout(this.clearStatusTimeout);
+            this.updateSaveStatus("Saving...");
+            this.saveTimeout = setTimeout(() => {
+                console.log("Debounce timer expired, triggering auto-save...");
+                this.saveDocument();
+            }, this.debounceDelay);
         }
       }
 
@@ -1201,6 +1269,21 @@
              console.log("[deleteBlock] No suitable block found to focus after deletion.");
         }
       }
+
+      updateSaveStatus(message, autoClear = false, clearDelay = 2000) {
+          if (!this.saveStatusElement) return;
+
+          this.saveStatusElement.textContent = message;
+          this.saveStatusElement.classList.add('visible');
+
+          clearTimeout(this.clearStatusTimeout);
+
+          if (autoClear) {
+              this.clearStatusTimeout = setTimeout(() => {
+                  this.saveStatusElement.classList.remove('visible');
+              }, clearDelay);
+          }
+      }
     }
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -1215,6 +1298,14 @@
           window.editor = new Slipstream(editorContainer);
       } else {
           console.error("Editor container not found!");
+      }
+
+      const shareButton = document.getElementById('share-button');
+      if (shareButton) {
+          console.log("Found share button, attaching click listener.");
+          shareButton.addEventListener('click', openShareModal);
+      } else {
+          console.log("Share button not found (possibly due to view-only access).");
       }
 
       if (window.PAGE_ID) {
@@ -1317,9 +1408,172 @@
         window.currentBlock = null;
       });
     }
+
+    function openShareModal() {
+        console.log("openShareModal called.");
+        const modal = document.getElementById('share-modal');
+        console.log("Modal element:", modal);
+
+        if (!modal) {
+            console.error("Share modal element with ID 'share-modal' not found.");
+            alert("Error: Could not find the share dialog components.");
+            return;
+        }
+
+        if (!window.PAGE_ID) {
+            console.error("Cannot open share modal: window.PAGE_ID is missing or null.");
+            alert("Error: Page information is missing, cannot open share settings.");
+            return;
+        }
+
+        try {
+            console.log("Populating share modal...");
+            populateShareModal();
+            console.log("Setting modal display to 'block'.");
+            modal.style.display = "block";
+            console.log("Share modal should now be visible.");
+        } catch (error) {
+             console.error("Error occurred within openShareModal:", error);
+             alert("An unexpected error occurred while trying to open the share dialog.");
+        }
+    }
+
+    function closeShareModal() {
+        const modal = document.getElementById('share-modal');
+        if (modal) {
+            modal.style.display = "none";
+        }
+    }
+
+    function populateShareModal() {
+        console.log("populateShareModal called.");
+        const publishCheckbox = document.getElementById('publish-checkbox');
+        const publishStatusText = document.getElementById('publish-status-text');
+        const publicLinkContainer = document.getElementById('public-link-container');
+        const publicLink = document.getElementById('public-link');
+        const sharedUsersList = document.getElementById('shared-users-list');
+
+        if (publishCheckbox) publishCheckbox.checked = window.IS_PUBLISHED;
+        if (publishStatusText) publishStatusText.textContent = window.IS_PUBLISHED ? "Page is public" : "Make page public";
+        if (publicLinkContainer) publicLinkContainer.style.display = window.IS_PUBLISHED ? 'block' : 'none';
+        if (publicLink) {
+            const linkUrl = `${window.location.origin}/view/pages/${window.PAGE_ID}`;
+            publicLink.href = linkUrl;
+            publicLink.textContent = linkUrl;
+        }
+        if (sharedUsersList) sharedUsersList.innerHTML = '';
+
+        if (window.SHARING_INFO && sharedUsersList) {
+            console.log("Populating shared users list with:", window.SHARING_INFO);
+            Object.entries(window.SHARING_INFO).forEach(([email, accessLevel]) => {
+                if (email === window.PAGE_OWNER) return;
+
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <span>${email} (${accessLevel})</span>
+                    <button class="remove-share-button" onclick="removeShare('${email}')">Remove</button>
+                `;
+                sharedUsersList.appendChild(li);
+            });
+        } else {
+             console.log("No sharing info or list element found to populate.");
+        }
+    }
+
+    async function togglePublish() {
+        const publishCheckbox = document.getElementById('publish-checkbox');
+        const isPublished = publishCheckbox.checked;
+        const method = isPublished ? 'POST' : 'DELETE';
+        const url = `/api/pages/${window.PAGE_ID}/publish`;
+
+        console.log(`Toggling publish status to ${isPublished} via ${method} ${url}`);
+
+        try {
+            const response = await fetchWithAuth(url, { method: method });
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || `Failed to ${isPublished ? 'publish' : 'unpublish'} page`);
+            }
+            const data = await response.json();
+            window.IS_PUBLISHED = data.isPublished;
+            console.log("Publish status updated successfully:", window.IS_PUBLISHED);
+            populateShareModal();
+        } catch (error) {
+            console.error("Error toggling publish status:", error);
+            alert(`Error: ${error.message}`);
+            publishCheckbox.checked = !isPublished;
+            populateShareModal();
+        }
+    }
+
+    async function addShare() {
+        const emailInput = document.getElementById('share-email-input');
+        const accessSelect = document.getElementById('share-access-select');
+        const email = emailInput.value.trim();
+        const accessLevel = accessSelect.value;
+
+        if (!email) {
+            alert("Please enter an email address.");
+            return;
+        }
+        if (email === window.PAGE_OWNER) {
+             alert("You cannot share the page with the owner.");
+             return;
+        }
+
+        console.log(`Attempting to share page ${window.PAGE_ID} with ${email} (${accessLevel})`);
+
+        try {
+            const response = await fetchWithAuth(`/api/pages/${window.PAGE_ID}/share`, {
+                method: 'POST',
+                body: JSON.stringify({ userEmail: email, accessLevel: accessLevel })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || `Failed to share page`);
+            }
+
+            const updatedSharingInfo = await response.json();
+            window.SHARING_INFO = updatedSharingInfo;
+            console.log("Sharing successful, updated info:", window.SHARING_INFO);
+            emailInput.value = '';
+            populateShareModal();
+
+        } catch (error) {
+            console.error("Error adding share:", error);
+            alert(`Error sharing page: ${error.message}`);
+        }
+    }
+
+    async function removeShare(email) {
+        if (!confirm(`Are you sure you want to remove access for ${email}?`)) {
+            return;
+        }
+
+        console.log(`Attempting to remove share for ${email} from page ${window.PAGE_ID}`);
+
+        try {
+            const response = await fetchWithAuth(`/api/pages/${window.PAGE_ID}/share?userEmail=${encodeURIComponent(email)}`, {
+                method: 'DELETE'
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || `Failed to remove share`);
+            }
+
+            const updatedSharingInfo = await response.json();
+            window.SHARING_INFO = updatedSharingInfo;
+            console.log("Share removal successful, updated info:", window.SHARING_INFO);
+            populateShareModal();
+
+        } catch (error) {
+            console.error("Error removing share:", error);
+            alert(`Error removing share: ${error.message}`);
+        }
+    }
   </script>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.1/sockjs.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
 </body>
 </html>

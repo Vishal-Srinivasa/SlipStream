@@ -46,6 +46,7 @@ public class PageViewController {
     public String viewPage(@PathVariable String pageId, Model model, HttpServletRequest request, RedirectAttributes redirectAttributes) {
         boolean canEdit = false;
         PageComponent page = null;
+        String currentUserEmail = getCurrentUserEmail();
 
         try {
             page = pageService.getPage(pageId);
@@ -59,12 +60,12 @@ public class PageViewController {
             try {
                 pageService.getPageForEditing(pageId);
                 canEdit = true;
-                logger.debug("User has edit access to page {}", pageId);
+                logger.debug("User '{}' has edit access to page {}", currentUserEmail, pageId);
             } catch (AccessDeniedException editDeniedException) {
                 canEdit = false;
-                logger.debug("User has view-only access to page {}: {}", pageId, editDeniedException.getMessage());
-            } catch (Exception e) {
-                logger.error("Unexpected error checking edit access for page {}: {}", pageId, e.getMessage());
+                logger.debug("User '{}' has view-only access to page {}: {}", currentUserEmail, pageId, editDeniedException.getMessage());
+            } catch (ExecutionException | InterruptedException editCheckException) {
+                logger.error("Error checking edit access for page {}: {}", pageId, editCheckException.getMessage());
                 canEdit = false;
             }
 
@@ -78,8 +79,17 @@ public class PageViewController {
             model.addAttribute("isPublished", page.isPublished());
             model.addAttribute("sharingInfo", page.getSharingInfo());
             model.addAttribute("canEdit", canEdit);
+            model.addAttribute("currentUserEmail", currentUserEmail);
 
-            List<PageComponent> childPages = pageService.getChildPages(pageId);
+            List<PageComponent> childPages = new ArrayList<>();
+            if (!page.isLeaf()) {
+                try {
+                    childPages = pageService.getChildPages(pageId);
+                } catch (ExecutionException | InterruptedException childFetchException) {
+                    logger.error("Error fetching child pages for {}: {}", pageId, childFetchException.getMessage());
+                    model.addAttribute("childErrorMessage", "Could not load child pages.");
+                }
+            }
             model.addAttribute("childPages", childPages);
 
             logger.info("Viewing Page: {} (ID: {}), Can Edit: {}", page.getTitle(), pageId, canEdit);
@@ -87,21 +97,23 @@ public class PageViewController {
             return "page_template";
 
         } catch (AccessDeniedException viewDeniedException) {
-            String currentUserEmail = getCurrentUserEmail();
-            logger.warn("Access Denied: User '{}' attempted to view page '{}'. Redirecting to login.",
-                        currentUserEmail != null ? currentUserEmail : "anonymous", pageId);
+            logger.warn("Access Denied: User '{}' attempted to view page '{}'. Message: {}",
+                        currentUserEmail != null ? currentUserEmail : "anonymous", pageId, viewDeniedException.getMessage());
 
             String continueUrl = request.getRequestURI();
             if (request.getQueryString() != null) {
                 continueUrl += "?" + request.getQueryString();
             }
-            redirectAttributes.addFlashAttribute("login_error", "You need to log in to view that page.");
+            String loginMessage = (currentUserEmail != null)
+                ? "You do not have permission to view this page. Log in with an authorized account."
+                : "You need to log in to view this page.";
+            redirectAttributes.addFlashAttribute("login_error", loginMessage);
             return "redirect:/login?continue=" + continueUrl;
 
         } catch (InterruptedException | ExecutionException e) {
             logger.error("Error retrieving page {}: {}", pageId, e.getMessage(), e);
-            model.addAttribute("errorMessage", "Error retrieving page: " + e.getMessage());
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error retrieving page", e);
+            model.addAttribute("errorMessage", "Error retrieving page data.");
+            return "error";
         }
     }
 
@@ -175,6 +187,7 @@ public class PageViewController {
             if (page != null) {
                 model.addAttribute("page", page);
                 model.addAttribute("isContainer", !page.isLeaf());
+                model.addAttribute("currentUserEmail", getCurrentUserEmail());
                 return "edit_page";
             } else {
                 model.addAttribute("errorMessage", "Page not found or access denied for editing.");
@@ -198,25 +211,22 @@ public class PageViewController {
                             @RequestParam String title,
                             @RequestParam String content) {
         try {
-            PageComponent page = pageService.getPageForEditing(pageId);
-            if (page != null) {
-                page.setTitle(title);
-                
-                if (page.isLeaf()) {
-                    ((ContentPage) page).setContent(content);
-                } else {
-                    ((ContainerPage) page).setSummary(content);
-                }
-                
-                pageService.createPage(page);
+            boolean updated = pageService.updatePage(pageId, title, content);
+
+            if (updated) {
                 return "redirect:/view/pages/" + pageId;
             } else {
-                return "error";
+                return "redirect:/view/pages/" + pageId + "?error=update_failed_not_found";
             }
         } catch (AccessDeniedException e) {
             return "redirect:/view/pages/" + pageId + "?error=access_denied";
         } catch (InterruptedException | ExecutionException e) {
-            return "redirect:/view/pages/" + pageId + "?error=update_failed";
+            Thread.currentThread().interrupt();
+            logger.error("Error processing update for page {}: {}", pageId, e.getMessage(), e);
+            return "redirect:/view/pages/" + pageId + "?error=update_failed_server_error";
+        } catch (Exception e) {
+            logger.error("Unexpected error processing update for page {}: {}", pageId, e.getMessage(), e);
+            return "redirect:/view/pages/" + pageId + "?error=update_failed_unexpected";
         }
     }
 }

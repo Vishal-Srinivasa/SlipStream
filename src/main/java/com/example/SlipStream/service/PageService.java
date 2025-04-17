@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -110,7 +111,10 @@ public class PageService {
             }
             newContainerPage.getChildrenIds().add(childPageId);
 
-            pageRepository.updatePage(newContainerPage);
+            boolean updated = pageRepository.updatePage(newContainerPage);
+            if (updated) {
+                broadcastPageUpdate(parentPageId, newContainerPage);
+            }
         } else if (parentPage instanceof ContainerPage) {
             ContainerPage containerParent = (ContainerPage) parentPage;
 
@@ -120,8 +124,12 @@ public class PageService {
 
             if (!containerParent.getChildrenIds().contains(childPageId)) {
                 containerParent.getChildrenIds().add(childPageId);
+                containerParent.setLastUpdated(new Date());
 
-                pageRepository.updatePage(containerParent);
+                boolean updated = pageRepository.updatePage(containerParent);
+                if (updated) {
+                    broadcastPageUpdate(parentPageId, containerParent);
+                }
             }
         }
     }
@@ -285,6 +293,7 @@ public class PageService {
             boolean success = pageRepository.updatePage(page);
             if (success) {
                 logger.info("Successfully updated page {}", pageId);
+                broadcastPageUpdate(pageId, page);
             } else {
                 logger.error("Repository failed to update page {}", pageId);
             }
@@ -293,32 +302,6 @@ public class PageService {
             logger.info("No changes detected for page {}, skipping update.", pageId);
             return true;
         }
-    }
-
-    @Deprecated
-    public boolean updatePageContent(String pageId, String newContent) throws ExecutionException, InterruptedException {
-        PageComponent page = getPageForEditing(pageId);
-        if (page == null) {
-            return false;
-        }
-
-        boolean changed = false;
-        String currentContent = page.getContent();
-        if (newContent != null && !newContent.equals(currentContent)) {
-            if (page.isLeaf() && page instanceof ContentPage) {
-                ((ContentPage) page).setContent(newContent);
-                changed = true;
-            } else if (!page.isLeaf() && page instanceof ContainerPage) {
-                ((ContainerPage) page).setSummary(newContent);
-                changed = true;
-            }
-        }
-
-        if (changed) {
-             page.setLastUpdated(new Date());
-             return pageRepository.updatePage(page);
-        }
-        return true;
     }
 
     public List<String> deletePage(String pageId) throws ExecutionException, InterruptedException {
@@ -439,7 +422,13 @@ public class PageService {
         }
 
         page.addShare(userEmailToShareWith, accessLevel);
-        return pageRepository.updatePage(page);
+        page.setLastUpdated(new Date());
+        boolean success = pageRepository.updatePage(page);
+        if (success) {
+            logger.info("Page {} shared with {} ({} access).", pageId, userEmailToShareWith, accessLevel);
+            broadcastPageUpdate(pageId, page);
+        }
+        return success;
     }
 
     public boolean unsharePage(String pageId, String userEmailToUnshare) throws ExecutionException, InterruptedException {
@@ -449,7 +438,13 @@ public class PageService {
         }
 
         page.removeShare(userEmailToUnshare);
-        return pageRepository.updatePage(page);
+        page.setLastUpdated(new Date());
+        boolean success = pageRepository.updatePage(page);
+        if (success) {
+            logger.info("Sharing removed for user {} from page {}.", userEmailToUnshare, pageId);
+            broadcastPageUpdate(pageId, page);
+        }
+        return success;
     }
 
     public boolean publishPage(String pageId) throws ExecutionException, InterruptedException {
@@ -459,7 +454,13 @@ public class PageService {
         }
 
         page.setPublished(true);
-        return pageRepository.updatePage(page);
+        page.setLastUpdated(new Date());
+        boolean success = pageRepository.updatePage(page);
+        if (success) {
+            logger.info("Page {} published successfully.", pageId);
+            broadcastPageUpdate(pageId, page);
+        }
+        return success;
     }
 
     public boolean unpublishPage(String pageId) throws ExecutionException, InterruptedException {
@@ -469,6 +470,30 @@ public class PageService {
         }
 
         page.setPublished(false);
-        return pageRepository.updatePage(page);
+        page.setLastUpdated(new Date());
+        boolean success = pageRepository.updatePage(page);
+        if (success) {
+            logger.info("Page {} unpublished successfully.", pageId);
+            broadcastPageUpdate(pageId, page);
+        }
+        return success;
+    }
+
+    private void broadcastPageUpdate(String pageId, PageComponent page) {
+        String destination = "/topic/pages/" + pageId;
+        try {
+            Map<String, Object> updatePayload = Map.of(
+                "pageId", page.getPageId(),
+                "title", page.getTitle(),
+                "content", page.getContent(),
+                "lastUpdated", page.getLastUpdated(),
+                "isPublished", page.isPublished(),
+                "sharingInfo", page.getSharingInfo()
+            );
+            logger.info("Broadcasting update for page {} to {}", pageId, destination);
+            messagingTemplate.convertAndSend(destination, updatePayload);
+        } catch (Exception e) {
+            logger.error("Error broadcasting update for page {}: {}", pageId, e.getMessage(), e);
+        }
     }
 }
