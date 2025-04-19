@@ -127,6 +127,11 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
 		</dependency>
+		<dependency>
+    <groupId>com.vladsch.flexmark</groupId>
+    <artifactId>flexmark-all</artifactId>
+    <version>0.64.0</version>
+</dependency>
 	</dependencies>
 
 	<build>

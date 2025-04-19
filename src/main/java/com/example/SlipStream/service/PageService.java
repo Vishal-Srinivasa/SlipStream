@@ -496,4 +496,41 @@ public class PageService {
             logger.error("Error broadcasting update for page {}: {}", pageId, e.getMessage(), e);
         }
     }
+    public PageComponent getExpandedPageWithSubpages(String pageId) throws ExecutionException, InterruptedException {
+        PageComponent page = pageRepository.getPage(pageId);
+        
+        // Check permissions first
+        String currentUserEmail = getCurrentUserEmail();
+        if (!hasAccess(page, currentUserEmail, "view")) {
+            throw new AccessDeniedException("User " + (currentUserEmail != null ? currentUserEmail : "anonymous") + 
+                                           " does not have view access to page " + pageId);
+        }
+        
+        // Handle different page types
+        if (page instanceof ContainerPage) {
+            ContainerPage containerPage = (ContainerPage) page;
+            fetchSubPagesRecursively(containerPage);
+            return containerPage;
+        } else {
+            // If it's a ContentPage or other type, just return it as is
+            return page;
+        }
+    }
+
+    private void fetchSubPagesRecursively(ContainerPage page) throws ExecutionException, InterruptedException {
+        List<PageComponent> children = page.getChildren(); // only valid for ContainerPage
+        if (children != null) {
+            for (int i = 0; i < children.size(); i++) {
+                PageComponent child = children.get(i);
+                // USE getPageId(), not getId()
+                PageComponent fullChild = pageRepository.getPage(child.getPageId());
+
+                if (fullChild instanceof ContainerPage) {
+                    fetchSubPagesRecursively((ContainerPage) fullChild);
+                }
+
+                children.set(i, fullChild);
+            }
+        }
+    }
 }
