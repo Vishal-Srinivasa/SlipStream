@@ -86,6 +86,7 @@ public class SecurityConfig {
                 .requestMatchers("/view/pages/create/**", "/view/pages/edit/**").authenticated() // Creating/Editing requires login
                 // Authenticated access for all other API endpoints (POST, PUT, DELETE on /api/pages/*)
                 .requestMatchers("/api/**").authenticated()
+                .requestMatchers(HttpMethod.GET,"/workspaces/**").authenticated() // All workspace-related API endpoints require authentication
                 // Any other request not matched above requires authentication
                 .anyRequest().authenticated()
             )

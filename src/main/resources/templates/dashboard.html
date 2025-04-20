@@ -5,14 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Slipstream</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
-        .page-link {
+        .page-link, .workspace-link {
             text-decoration: none;
             color: #333;
             flex-grow: 1;
             margin-right: 10px;
         }
-        .page-link:hover {
+        .page-link:hover, .workspace-link:hover {
             text-decoration: underline;
         }
         .create-button {
@@ -23,11 +24,27 @@
             border-radius: 5px;
             text-decoration: none;
             transition: background-color 0.2s;
+            border: none;
+            cursor: pointer;
         }
         .create-button:hover {
             background-color: #218838;
         }
-        .page-item {
+        .create-page-button {
+            display: inline-block;
+            padding: 4px 8px;
+            background-color: #007bff;
+            color: white;
+            border-radius: 3px;
+            text-decoration: none;
+            transition: background-color 0.2s;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .create-page-button:hover {
+            background-color: #0056b3;
+        }
+        .page-item, .workspace-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -36,6 +53,11 @@
             background-color: #f9f9f9;
             border: 1px solid #eee;
             border-radius: 4px;
+        }
+        .page-item-nested {
+            margin-left: 20px;
+            border-left: 2px solid #ddd;
+            padding-left: 10px;
         }
         .delete-button {
             padding: 4px 8px;
@@ -46,9 +68,19 @@
             cursor: pointer;
             font-size: 12px;
             flex-shrink: 0;
+            margin-left: 10px;
         }
         .delete-button:hover {
             background-color: #c82333;
+        }
+        .action-buttons {
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .page-icon {
+            margin-right: 8px;
+            color: #666;
         }
     </style>
 </head>
@@ -64,66 +96,124 @@
             <strong class="font-bold">Error:</strong>
             <span class="block sm:inline" th:text="${errorMessage}"></span>
         </div>
-
-        <div class="mb-6">
-            <a th:href="@{/view/pages/create}" class="create-button">
-                <i class="fas fa-plus mr-1"></i> Create New Page
-            </a>
+        <div th:if="${successMessage}" class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4" role="alert">
+            <span class="block sm:inline" th:text="${successMessage}"></span>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Create Workspace Form -->
+        <div class="mb-6 p-4 border rounded bg-gray-50">
+            <h2 class="text-xl font-semibold mb-3">Create New Workspace</h2>
+            <form th:action="@{/workspaces}" method="post" class="flex items-center space-x-3">
+                <input type="text" name="name" placeholder="Enter workspace name" required
+                       class="flex-grow px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                <button type="submit" class="create-button">
+                    <i class="fas fa-plus mr-1"></i> Create Workspace
+                </button>
+            </form>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-1 gap-6">
+
+            <!-- Workspaces Section -->
             <div>
-                <h2 class="text-xl font-semibold mb-3 border-b pb-2">My Pages</h2>
-                <div th:if="${#lists.isEmpty(ownedPages)}">
-                    <p class="text-gray-500">You haven't created any pages yet.</p>
+                <h2 class="text-xl font-semibold mb-3 border-b pb-2">My Workspaces</h2>
+                <div th:if="${#lists.isEmpty(workspaces)}">
+                    <p class="text-gray-500">You are not a member of any workspaces yet.</p>
                 </div>
-                <div th:unless="${#lists.isEmpty(ownedPages)}">
+                <div th:unless="${#lists.isEmpty(workspaces)}">
                     <ul>
-                        <li th:each="page : ${ownedPages}" th:id="'page-item-' + ${page.pageId}" class="page-item">
-                            <a th:href="@{'/view/pages/' + ${page.pageId}}"
-                               th:text="${page.title} ?: 'Untitled Page'"
-                               class="page-link">
-                                Page Title
-                            </a>
-                            <button th:if="${page.owner == currentUserEmail}"
-                                    th:data-page-id="${page.pageId}"
-                                    th:data-page-title="${page.title} ?: 'Untitled Page'"
-                                    th:onclick="deletePage(this, event)"
-                                    class="delete-button">
-                                <i class="fas fa-trash-alt"></i> Delete
-                            </button>
+                        <!-- Iterate through each workspace -->
+                        <li th:each="workspace : ${workspaces}" class="mb-4">
+                            <!-- Workspace Item Display -->
+                            <div th:id="'workspace-item-' + ${workspace.id}" class="workspace-item">
+                                <a th:href="@{'/workspaces/' + ${workspace.id}}"
+                                   th:text="${workspace.name}"
+                                   class="workspace-link font-semibold">
+                                    Workspace Name
+                                </a>
+                                <div class="action-buttons">
+                                    <a th:href="@{'/view/pages/create?workspaceId=' + ${workspace.id}}" class="create-page-button">
+                                        <i class="fas fa-plus"></i> Create Page
+                                    </a>
+                                    <button th:if="${workspace.owner != null and currentUserEmail != null and workspace.owner.equals(currentUserEmail)}"
+                                            th:data-workspace-id="${workspace.id}"
+                                            th:data-workspace-name="${workspace.name}"
+                                            th:onclick="deleteWorkspace(this, event)"
+                                            class="delete-button">
+                                        <i class="fas fa-trash-alt"></i> Delete
+                                    </button>
+                                </div>
+                            </div>
                         </li>
                     </ul>
                 </div>
             </div>
 
+            <!-- Pages Section -->
             <div>
-                <h2 class="text-xl font-semibold mb-3 border-b pb-2">Shared With Me</h2>
-                 <div th:if="${#lists.isEmpty(sharedPages)}">
-                    <p class="text-gray-500">No pages have been shared with you.</p>
+                <h2 class="text-xl font-semibold mb-3 border-b pb-2">Pages</h2>
+                <div th:if="${#lists.isEmpty(pageNodes)}">
+                    <p class="text-gray-500">You don't have access to any pages yet.</p>
                 </div>
-                <div th:unless="${#lists.isEmpty(sharedPages)}">
+                <div th:unless="${#lists.isEmpty(pageNodes)}">
                     <ul>
-                        <li th:each="page : ${sharedPages}" class="page-item">
-                            <a th:href="@{'/view/pages/' + ${page.pageId}}"
-                               th:text="${page.title} ?: 'Untitled Page'"
-                               class="page-link">
-                                Shared Page Title
-                            </a>
-                        </li>
+                        <!-- Use the pageTree fragment for the top-level pageNodes -->
+                        <th:block th:each="node : ${pageNodes}" th:include="~{:: pageTree(${node}, 0)}" />
                     </ul>
                 </div>
             </div>
+
         </div>
 
     </div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js"></script>
 
+    <!-- Thymeleaf Fragment for Recursive Page Tree -->
+    <th:block th:fragment="pageTree(node, level)">
+        <!-- Add null check for node and node.page -->
+        <li th:if="${node != null and node.page != null}">
+            <div th:id="'page-item-' + ${node.page.pageId}" class="page-item" th:style="${level > 0 ? 'margin-left:' + (level * 20) + 'px;' : ''}">
+                <div class="flex items-center flex-grow">
+                    <i th:class="${node.page.leaf} ? 'fas fa-file-alt page-icon' : 'fas fa-folder page-icon'"></i>
+                    <a th:href="@{'/view/pages/' + ${node.page.pageId}}"
+                       th:text="${node.page.title} ?: 'Untitled Page'"
+                       class="page-link">
+                        Page Title
+                    </a>
+                </div>
+                <div class="action-buttons">
+                     <!-- Simplify the href, remove workspaceId access -->
+                    <a th:if="${!node.page.leaf}" th:href="@{'/view/pages/create?parentId=' + ${node.page.pageId}}" class="create-page-button">
+                        <i class="fas fa-plus"></i> Add Child
+                    </a>
+                    <!-- Update th:if for safer string comparison and null check -->
+                    <button th:if="${node.page.owner != null and currentUserEmail != null and node.page.owner.equals(currentUserEmail)}"
+                            th:data-page-id="${node.page.pageId}"
+                            th:data-page-title="${node.page.title} ?: 'Untitled Page'"
+                            th:onclick="deletePage(this, event)"
+                            class="delete-button">
+                        <i class="fas fa-trash-alt"></i> Delete
+                    </button>
+                </div>
+            </div>
+            <!-- Also check node.children before iterating -->
+            <ul th:if="${node.children != null and !#lists.isEmpty(node.children)}">
+                 <!-- Recursive call with increased level -->
+                <th:block th:each="childNode : ${node.children}" th:include="~{:: pageTree(${childNode}, ${level + 1})}" />
+            </ul>
+        </li>
+    </th:block>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js"></script>
     <script>
         async function fetchWithAuth(url, options = {}) {
+            const token = localStorage.getItem('firebaseIdToken');
             const defaultHeaders = {
                 'Content-Type': 'application/json',
             };
+            if (token) {
+                defaultHeaders['Authorization'] = `Bearer ${token}`;
+            }
+
             const fetchOptions = {
                 ...options,
                 headers: {
@@ -131,15 +221,15 @@
                     ...options.headers,
                 },
             };
-            
+
             const response = await fetch(url, fetchOptions);
 
             if (response.status === 401 || response.status === 403) {
-                 console.error(`Authentication/Authorization error (${response.status}) for ${url}. Redirecting or showing error.`);
-                 alert(`Error: Access denied (${response.status}). Please ensure you are logged in and have permission.`);
-                 throw new Error(`Authentication required (status ${response.status})`);
+                console.error(`Authentication/Authorization error (${response.status}) for ${url}.`);
+                alert(`Error: Access denied (${response.status}). Please ensure you are logged in and have permission.`);
+                throw new Error(`Authentication/Authorization required (status ${response.status})`);
             }
-            
+
             return response;
         }
 
@@ -162,27 +252,83 @@
                         deletedIds.forEach(deletedId => {
                             const listItem = document.getElementById(`page-item-${deletedId}`);
                             if (listItem) {
-                                listItem.remove();
-                                console.log(`Removed page item ${deletedId} from dashboard.`);
+                                const parentLi = listItem.closest('li');
+                                if (parentLi) {
+                                    parentLi.remove();
+                                    console.log(`Removed page list item containing ${deletedId} from dashboard.`);
+                                } else {
+                                    listItem.remove();
+                                    console.log(`Removed page item div ${deletedId} from dashboard.`);
+                                }
                             } else {
-                                console.log(`Page item ${deletedId} not found in the current view (might be a child not displayed).`);
+                                console.log(`Page item ${deletedId} not found in the current view (might be a child not displayed or already removed).`);
                             }
                         });
 
                         alert(`Page "${pageTitle}" and its sub-pages deleted successfully.`);
 
-                    } else if (response.status === 404) {
-                         alert(`Failed to delete page "${pageTitle}". Reason: Page not found.`);
-                    } else if (response.status === 403) {
-                         alert(`Failed to delete page "${pageTitle}". Reason: Access Denied.`);
-                    }
-                    else {
-                        const errorText = await response.text();
-                        alert(`Failed to delete page "${pageTitle}". Status: ${response.status}. Error: ${errorText || 'Unknown error'}`);
+                    } else {
+                        let errorReason = `Status: ${response.status}`;
+                        try {
+                            const errorResult = await response.json();
+                            errorReason = errorResult.error || errorResult.message || errorReason;
+                        } catch (e) {
+                            errorReason = await response.text() || errorReason;
+                        }
+                        alert(`Failed to delete page "${pageTitle}". Reason: ${errorReason}`);
                     }
                 } catch (error) {
-                    console.error('Error deleting page:', error);
-                    alert(`An error occurred while deleting the page "${pageTitle}": ${error.message}`);
+                    console.error('Error during deletePage processing:', error);
+                    if (!error.message.includes('Authentication required') && !error.message.includes('Authorization required')) {
+                        alert(`An error occurred while deleting the page "${pageTitle}".`);
+                    }
+                }
+            }
+        }
+
+        async function deleteWorkspace(buttonElement, event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const workspaceId = buttonElement.dataset.workspaceId;
+            const workspaceName = buttonElement.dataset.workspaceName;
+
+            if (confirm(`Are you sure you want to delete the workspace "${workspaceName}" and ALL its pages? This action cannot be undone.`)) {
+                try {
+                    const response = await fetchWithAuth(`/workspaces/${workspaceId}`, {
+                        method: 'DELETE',
+                    });
+
+                    if (response.ok) {
+                        let message = `Workspace "${workspaceName}" deleted successfully.`;
+                        try {
+                            const result = await response.json();
+                            if (result && result.message) message = result.message;
+                        } catch (jsonError) {
+                            console.log("Workspace delete response was OK but not JSON:", response.statusText);
+                        }
+
+                        const listItem = document.getElementById(`workspace-item-${workspaceId}`);
+                        if (listItem) {
+                            listItem.remove();
+                        }
+                        alert(message);
+
+                    } else {
+                        let errorReason = `Status: ${response.status}`;
+                        try {
+                            const errorResult = await response.json();
+                            errorReason = errorResult.error || errorResult.message || errorReason;
+                        } catch (e) {
+                            errorReason = await response.text() || errorReason;
+                        }
+                        alert(`Failed to delete workspace "${workspaceName}". Reason: ${errorReason}`);
+                    }
+                } catch (error) {
+                    console.error('Error during deleteWorkspace processing:', error);
+                    if (!error.message.includes('Authentication required') && !error.message.includes('Authorization required')) {
+                        alert(`An error occurred while deleting the workspace "${workspaceName}".`);
+                    }
                 }
             }
         }

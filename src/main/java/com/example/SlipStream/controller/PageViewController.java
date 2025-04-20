@@ -131,15 +131,23 @@ public class PageViewController {
     }
 
     @GetMapping("/create")
-    public String showCreatePage(@RequestParam(required = false) String parentId, Model model) {
+    public String showCreatePage(@RequestParam(required = false) String parentId,
+                                 @RequestParam(required = false) String workspaceId,
+                                 Model model) {
+        logger.debug("Showing create page form with parentId: {}, workspaceId: {}", parentId, workspaceId);
         model.addAttribute("parentId", parentId);
+        model.addAttribute("workspaceId", workspaceId);
         model.addAttribute("pageType", "content");
         return "create_page";
     }
     
     @GetMapping("/create/container")
-    public String showCreateContainerPage(@RequestParam(required = false) String parentId, Model model) {
+    public String showCreateContainerPage(@RequestParam(required = false) String parentId,
+                                          @RequestParam(required = false) String workspaceId,
+                                          Model model) {
+        logger.debug("Showing create container page form with parentId: {}, workspaceId: {}", parentId, workspaceId);
         model.addAttribute("parentId", parentId);
+        model.addAttribute("workspaceId", workspaceId);
         model.addAttribute("pageType", "container");
         return "create_page";
     }
@@ -148,35 +156,49 @@ public class PageViewController {
     public String createPage(@RequestParam String title, 
                             @RequestParam(required = false) String parentId, 
                             @RequestParam(required = false) String owner,
-                            @RequestParam String pageType) {
+                            @RequestParam String pageType,
+                            @RequestParam(required = false) String workspaceId,
+                            RedirectAttributes redirectAttributes) {
+        String pageOwner = owner;
+        String pageId = null;
+
+        if (pageOwner == null || pageOwner.isEmpty()) {
+            pageOwner = getCurrentUserEmail();
+        }
+
+        if (pageOwner == null || pageOwner.isEmpty()) {
+            logger.error("Cannot create page: Owner could not be determined.");
+            redirectAttributes.addFlashAttribute("errorMessage", "Could not create page: User not identified.");
+            return "redirect:" + (workspaceId != null ? "/workspaces/" + workspaceId : (parentId != null ? "/view/pages/" + parentId : "/dashboard"));
+        }
+
+        logger.info("Attempting to create page. Title: '{}', Type: '{}', ParentID: '{}', WorkspaceID: '{}', Owner: '{}'",
+                    title, pageType, parentId, workspaceId, pageOwner);
+
         try {
-            String pageId;
-            String pageOwner = owner;
-
-            if (pageOwner == null || pageOwner.isEmpty()) {
-                Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-                if (authentication != null && authentication.isAuthenticated() && authentication.getPrincipal() instanceof UserDetails) {
-                    pageOwner = ((UserDetails) authentication.getPrincipal()).getUsername();
-                } else if (authentication != null && authentication.isAuthenticated()) {
-                    pageOwner = authentication.getName();
-                }
-            }
-
-            if (pageOwner == null || pageOwner.isEmpty()) {
-                return "error";
-            }
-
             if ("container".equals(pageType)) {
-                pageId = pageService.createContainerPage(title, "", parentId, pageOwner);
+                pageId = pageService.createContainerPage(title, "", parentId, pageOwner, workspaceId);
             } else {
-                pageId = pageService.createContentPage(title, "", parentId, pageOwner);
+                pageId = pageService.createContentPage(title, "", parentId, pageOwner, workspaceId);
             }
-            
+
+            logger.info("Successfully created page with ID: {}", pageId);
+            redirectAttributes.addFlashAttribute("successMessage", "Page '" + title + "' created successfully.");
             return "redirect:/view/pages/" + pageId;
+
         } catch (IllegalStateException e) {
-            return "error";
-        } catch (InterruptedException | ExecutionException e) {
-            return "error";
+            logger.error("Illegal state during page creation: {}", e.getMessage(), e);
+            redirectAttributes.addFlashAttribute("errorMessage", "Could not create page: " + e.getMessage());
+            return "redirect:" + (workspaceId != null ? "/workspaces/" + workspaceId : (parentId != null ? "/view/pages/" + parentId : "/dashboard"));
+        } catch (ExecutionException | InterruptedException e) {
+            logger.error("Execution/Interruption error during page creation: {}", e.getMessage(), e);
+            Thread.currentThread().interrupt();
+            redirectAttributes.addFlashAttribute("errorMessage", "Server error occurred while creating page.");
+            return "redirect:" + (workspaceId != null ? "/workspaces/" + workspaceId : (parentId != null ? "/view/pages/" + parentId : "/dashboard"));
+        } catch (Exception e) {
+            logger.error("Unexpected error during page creation: {}", e.getMessage(), e);
+            redirectAttributes.addFlashAttribute("errorMessage", "An unexpected error occurred while creating the page.");
+            return "redirect:" + (workspaceId != null ? "/workspaces/" + workspaceId : (parentId != null ? "/view/pages/" + parentId : "/dashboard"));
         }
     }
 

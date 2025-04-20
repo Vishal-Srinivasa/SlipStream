@@ -18,6 +18,7 @@ import com.example.SlipStream.model.ContainerPage;
 import com.example.SlipStream.model.ContentPage;
 import com.example.SlipStream.model.PageComponent;
 import com.example.SlipStream.repository.PageRepository;
+import com.example.SlipStream.repository.WorkspaceRepository;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,14 +30,16 @@ public class PageService {
     private static final Logger logger = LoggerFactory.getLogger(PageService.class);
     private final PageRepository pageRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final WorkspaceRepository workspaceRepository;
 
     @Autowired
-    public PageService(PageRepository pageRepository, SimpMessagingTemplate messagingTemplate) {
+    public PageService(PageRepository pageRepository, SimpMessagingTemplate messagingTemplate, WorkspaceRepository workspaceRepository) {
         this.pageRepository = pageRepository;
         this.messagingTemplate = messagingTemplate;
+        this.workspaceRepository = workspaceRepository;
     }
 
-    public String createContentPage(String title, String content, String parentPageId, String owner)
+    public String createContentPage(String title, String content, String parentPageId, String owner, String workspaceId)
             throws ExecutionException, InterruptedException {
         String pageOwner = (owner != null && !owner.isEmpty()) ? owner : getCurrentUserEmail();
         if (pageOwner == null) {
@@ -44,7 +47,19 @@ public class PageService {
         }
         ContentPage page = new ContentPage(title, content, parentPageId, pageOwner);
         String pageId = pageRepository.createPage(page);
+        page.setPageId(pageId);
         logger.info("Created Content Page: ID={}, Title='{}', Owner={}", pageId, title, pageOwner);
+
+        if (workspaceId != null && !workspaceId.isEmpty()) {
+            boolean addedToWorkspace = workspaceRepository.addRootPageToWorkspace(workspaceId, pageId);
+            if (!addedToWorkspace) {
+                logger.warn("Failed to add page {} to workspace {}", pageId, workspaceId);
+            } else {
+                logger.info("Successfully added page {} to workspace {}", pageId, workspaceId);
+            }
+        } else if (parentPageId == null) {
+            logger.warn("Root page {} created without a workspace association.", pageId);
+        }
 
         if (parentPageId != null && !parentPageId.isEmpty()) {
             updateParentChildRelationship(parentPageId, pageId);
@@ -53,7 +68,7 @@ public class PageService {
         return pageId;
     }
 
-    public String createContainerPage(String title, String summary, String parentPageId, String owner)
+    public String createContainerPage(String title, String summary, String parentPageId, String owner, String workspaceId)
             throws ExecutionException, InterruptedException {
         String pageOwner = (owner != null && !owner.isEmpty()) ? owner : getCurrentUserEmail();
         if (pageOwner == null) {
@@ -61,7 +76,19 @@ public class PageService {
         }
         ContainerPage page = new ContainerPage(title, summary, parentPageId, pageOwner);
         String pageId = pageRepository.createPage(page);
+        page.setPageId(pageId);
         logger.info("Created Container Page: ID={}, Title='{}', Owner={}", pageId, title, pageOwner);
+
+        if (workspaceId != null && !workspaceId.isEmpty()) {
+            boolean addedToWorkspace = workspaceRepository.addRootPageToWorkspace(workspaceId, pageId);
+            if (!addedToWorkspace) {
+                logger.warn("Failed to add page {} to workspace {}", pageId, workspaceId);
+            } else {
+                logger.info("Successfully added page {} to workspace {}", pageId, workspaceId);
+            }
+        } else if (parentPageId == null) {
+            logger.warn("Root container page {} created without a workspace association.", pageId);
+        }
 
         if (parentPageId != null && !parentPageId.isEmpty()) {
             updateParentChildRelationship(parentPageId, pageId);
@@ -149,6 +176,13 @@ public class PageService {
         }
         logger.debug("Access Granted: User '{}' viewing page '{}'.", currentUserEmail != null ? currentUserEmail : "anonymous", pageId);
         return page;
+    }
+
+    public List<PageComponent> getPagesByIds(List<String> pageIds) throws ExecutionException, InterruptedException {
+        logger.debug("Fetching pages by IDs: {}", pageIds);
+        List<PageComponent> pages = pageRepository.getPagesByIds(pageIds);
+        logger.debug("Found {} pages for IDs: {}", pages.size(), pageIds);
+        return pages;
     }
 
     public PageComponent getPageForEditing(String pageId) throws ExecutionException, InterruptedException {

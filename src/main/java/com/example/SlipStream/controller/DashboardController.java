@@ -1,7 +1,9 @@
 package com.example.SlipStream.controller;
 
 import com.example.SlipStream.model.PageComponent;
+import com.example.SlipStream.model.Workspace; // Import Workspace
 import com.example.SlipStream.service.PageService;
+import com.example.SlipStream.service.WorkspaceService; // Import WorkspaceService
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +16,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 import java.util.ArrayList;
+import java.util.Collections; // Import Collections
+import java.util.Comparator; // Import Comparator
+import java.util.HashMap; // Import HashMap
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -25,10 +30,56 @@ public class DashboardController {
 
     private static final Logger logger = LoggerFactory.getLogger(DashboardController.class);
     private final PageService pageService;
+    private final WorkspaceService workspaceService; // Add WorkspaceService
+
+    // Define PageNode inner class
+    public static class PageNode {
+        PageComponent page;
+        List<PageNode> children = new ArrayList<>();
+
+        public PageNode(PageComponent page) {
+            this.page = page;
+        }
+
+        public PageComponent getPage() {
+            return page;
+        }
+
+        public List<PageNode> getChildren() {
+            return children;
+        }
+
+        public void addChild(PageNode child) {
+            this.children.add(child);
+        }
+
+        // Recursive sort method
+        public void sortChildrenRecursively(Comparator<PageNode> comparator) {
+            this.children.sort(comparator);
+            for (PageNode child : this.children) {
+                child.sortChildrenRecursively(comparator);
+            }
+        }
+    }
 
     @Autowired
-    public DashboardController(PageService pageService) {
+    public DashboardController(PageService pageService, WorkspaceService workspaceService) { // Inject WorkspaceService
         this.pageService = pageService;
+        this.workspaceService = workspaceService; // Initialize WorkspaceService
+    }
+
+    private String getCurrentUserEmail() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.isAuthenticated() && !"anonymousUser".equals(authentication.getPrincipal().toString())) {
+            Object principal = authentication.getPrincipal();
+            if (principal instanceof UserDetails) {
+                return ((UserDetails) principal).getUsername();
+            } else {
+                // Fallback for non-UserDetails principals
+                return authentication.getName();
+            }
+        }
+        return null;
     }
 
     @GetMapping
@@ -36,73 +87,77 @@ public class DashboardController {
         String currentUserEmail = getCurrentUserEmail();
         if (currentUserEmail == null) {
             logger.warn("Cannot show dashboard, user not authenticated.");
-            // SecurityConfig should redirect to login, but double-check
             return "redirect:/login?error=session_expired";
         }
 
         logger.info("Loading dashboard for user: {}", currentUserEmail);
-        List<PageComponent> ownedPages = new ArrayList<>();
-        List<PageComponent> sharedPages = new ArrayList<>();
+        List<PageNode> rootPageNodes = new ArrayList<>(); // List for hierarchical page structure
+        List<Workspace> workspaces = new ArrayList<>(); // List for workspaces
 
         try {
-            // Fetch all pages - NOTE: This can be inefficient for large numbers of pages.
-            // Consider adding specific repository/service methods like getPagesOwnedBy(email)
-            // and getPagesSharedWith(email) if performance becomes an issue.
-            List<PageComponent> allAccessiblePages = pageService.getAllPages(); // Assuming this gets all pages user might see
+            // Fetch all pages accessible by the current user
+            List<PageComponent> allAccessiblePages = pageService.getAllPages();
+            logger.debug("Fetched {} accessible pages for user {}", allAccessiblePages.size(), currentUserEmail);
 
+            // Build hierarchy
+            Map<String, PageNode> nodeMap = new HashMap<>();
+            Map<String, PageComponent> pageMap = allAccessiblePages.stream()
+                    .collect(Collectors.toMap(PageComponent::getPageId, page -> page));
+
+            // Create nodes and identify roots
             for (PageComponent page : allAccessiblePages) {
-                boolean isOwner = page.getOwner() != null && page.getOwner().equals(currentUserEmail);
-                boolean isSharedWithUser = page.getSharingInfo() != null && page.getSharingInfo().containsKey(currentUserEmail);
+                PageNode node = new PageNode(page);
+                nodeMap.put(page.getPageId(), node);
 
-                if (isOwner) {
-                    // Add to owned list (even if also shared, owner takes precedence)
-                    ownedPages.add(page);
-                } else if (isSharedWithUser) {
-                    // Add to shared list only if not the owner
-                    sharedPages.add(page);
+                String parentId = page.getParentPageId();
+                // A page is a root if it has no parent OR its parent is not in the accessible list
+                if (parentId == null || parentId.isEmpty() || !pageMap.containsKey(parentId)) {
+                    rootPageNodes.add(node);
+                    logger.trace("Identified root page: {} ({})", page.getTitle(), page.getPageId());
                 }
-                // We could also add publicly published pages user doesn't own/isn't shared with,
-                // but the requirement focused on owned and shared.
             }
 
-            logger.debug("User {} owns {} pages and has {} pages shared with them.", currentUserEmail, ownedPages.size(), sharedPages.size());
+            // Link children to parents
+            for (PageNode node : nodeMap.values()) {
+                String parentId = node.getPage().getParentPageId();
+                if (parentId != null && !parentId.isEmpty() && nodeMap.containsKey(parentId)) {
+                    PageNode parentNode = nodeMap.get(parentId);
+                    if (parentNode != null) {
+                        parentNode.addChild(node);
+                        logger.trace("Linked child {} to parent {}", node.getPage().getPageId(), parentId);
+                    }
+                }
+            }
+
+            // Sort root nodes and their children recursively
+            Comparator<PageNode> pageNodeComparator = Comparator.comparing(node -> node.getPage().getTitle() != null ? node.getPage().getTitle() : "", String.CASE_INSENSITIVE_ORDER);
+            rootPageNodes.sort(pageNodeComparator);
+            for (PageNode rootNode : rootPageNodes) {
+                rootNode.sortChildrenRecursively(pageNodeComparator);
+            }
+            logger.debug("Built hierarchy with {} root nodes.", rootPageNodes.size());
+
+            // Fetch workspaces
+            workspaces = workspaceService.getWorkspacesForUser(currentUserEmail);
+            logger.debug("User {} is a member of {} workspaces.", currentUserEmail, workspaces.size());
 
         } catch (ExecutionException | InterruptedException e) {
-            logger.error("Error fetching pages for dashboard for user {}: {}", currentUserEmail, e.getMessage(), e);
-            Thread.currentThread().interrupt(); // Re-interrupt thread
-            model.addAttribute("errorMessage", "Could not load page data. Please try again later.");
-            // Keep ownedPages and sharedPages as empty lists
+            logger.error("Error fetching data for dashboard for user {}: {}", currentUserEmail, e.getMessage(), e);
+            Thread.currentThread().interrupt();
+            model.addAttribute("errorMessage", "Could not load dashboard data. Please try again later.");
+            // Keep lists empty
         } catch (Exception e) {
-             logger.error("Unexpected error fetching pages for dashboard for user {}: {}", currentUserEmail, e.getMessage(), e);
-             model.addAttribute("errorMessage", "An unexpected error occurred while loading page data.");
+            logger.error("Unexpected error fetching data for dashboard for user {}: {}", currentUserEmail, e.getMessage(), e);
+            model.addAttribute("errorMessage", "An unexpected error occurred while loading dashboard data.");
         }
 
+        // Sort workspaces alphabetically by name
+        workspaces.sort(Comparator.comparing(Workspace::getName, String.CASE_INSENSITIVE_ORDER));
 
-        // Sort pages alphabetically by title for consistent display
-        ownedPages.sort((p1, p2) -> String.CASE_INSENSITIVE_ORDER.compare(p1.getTitle() != null ? p1.getTitle() : "", p2.getTitle() != null ? p2.getTitle() : ""));
-        sharedPages.sort((p1, p2) -> String.CASE_INSENSITIVE_ORDER.compare(p1.getTitle() != null ? p1.getTitle() : "", p2.getTitle() != null ? p2.getTitle() : ""));
+        model.addAttribute("pageNodes", rootPageNodes); // Pass the hierarchical structure
+        model.addAttribute("workspaces", workspaces);
+        model.addAttribute("currentUserEmail", currentUserEmail);
 
-
-        model.addAttribute("ownedPages", ownedPages);
-        model.addAttribute("sharedPages", sharedPages);
-        model.addAttribute("currentUserEmail", currentUserEmail); // Add user email for display
-
-        return "dashboard"; // Name of the Thymeleaf template (dashboard.html)
-    }
-
-    // Helper method to get current user email
-    private String getCurrentUserEmail() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        // Check principal is not null and not the anonymousUser string
-        if (authentication != null && authentication.isAuthenticated() && authentication.getPrincipal() != null && !"anonymousUser".equals(authentication.getPrincipal().toString())) {
-            Object principal = authentication.getPrincipal();
-            if (principal instanceof UserDetails) {
-                return ((UserDetails) principal).getUsername(); // Typically the email
-            } else {
-                // Fallback if principal is just a String (e.g., from token directly)
-                return authentication.getName();
-            }
-        }
-        return null; // Return null if not authenticated or principal is anonymous/null
+        return "dashboard";
     }
 }

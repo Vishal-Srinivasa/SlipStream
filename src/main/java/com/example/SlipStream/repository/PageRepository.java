@@ -13,4 +13,5 @@ public interface PageRepository {
     boolean updatePageContent(String pageId, String newContent) throws ExecutionException, InterruptedException;
     boolean deletePage(String pageId) throws ExecutionException, InterruptedException;
     boolean updatePage(PageComponent page) throws ExecutionException, InterruptedException;
+    List<PageComponent> getPagesByIds(List<String> pageIds) throws ExecutionException, InterruptedException;
 }

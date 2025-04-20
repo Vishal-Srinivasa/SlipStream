@@ -14,12 +14,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.lang.NonNull;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -42,40 +42,48 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
                                     @NonNull FilterChain filterChain)
             throws ServletException, IOException {
 
-        // Check if user is already authenticated via session
-        Authentication existingAuth = SecurityContextHolder.getContext().getAuthentication();
-        if (existingAuth != null && existingAuth.isAuthenticated() && !"anonymousUser".equals(existingAuth.getPrincipal().toString())) {
-            logger.trace("User already authenticated via session ({}). Skipping Firebase token check for {}", existingAuth.getName(), request.getRequestURI());
-            filterChain.doFilter(request, response);
-            return;
-        }
-
-        // Skip filter for specific paths like login and token verification
         String path = request.getRequestURI();
-        if (path.equals("/api/auth/verify-token") || path.equals("/login") || path.equals("/")) {
-            logger.trace("Skipping FirebaseTokenFilter for path: {}", path);
+        logger.debug("FirebaseTokenFilter processing request for: {}", path);
+
+        // --- Check for existing valid session authentication ---
+        Authentication existingAuth = SecurityContextHolder.getContext().getAuthentication();
+        if (existingAuth != null && existingAuth.isAuthenticated() && !(existingAuth instanceof AnonymousAuthenticationToken)) {
+            logger.info("User '{}' already authenticated via session for {}. Skipping Firebase token check.", existingAuth.getName(), path);
             filterChain.doFilter(request, response);
+            logger.debug("Filter chain completed for {} (session auth existed)", path);
+            return;
+        } else {
+            logger.debug("No valid pre-existing session authentication found for {}. Current context auth: {}", path, existingAuth);
+        }
+        // --- End session check ---
+
+        if (path.equals("/api/auth/verify-token") || path.equals("/login") || path.equals("/")) {
+            logger.trace("Skipping FirebaseTokenFilter token logic for path: {}", path);
+            filterChain.doFilter(request, response);
+            logger.debug("Filter chain completed for {} (skipped path)", path);
             return;
         }
 
-        logger.trace("Attempting Firebase token verification for path: {}", path);
+        logger.debug("Attempting Firebase token verification (as session auth was not found/valid) for path: {}", path);
         String authorizationHeader = request.getHeader("Authorization");
         String idToken = null;
 
         if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
             idToken = authorizationHeader.substring(7);
-            logger.trace("Found Bearer token in Authorization header.");
+            logger.debug("Found Bearer token in Authorization header for {}.", path);
         } else {
-            logger.trace("No Bearer token found in Authorization header for path: {}", path);
+            logger.debug("No Bearer token found in Authorization header for {}. Relying on session mechanism (which seems to have failed).", path);
         }
 
         FirebaseToken decodedToken = null;
         if (idToken != null) {
             try {
                 decodedToken = firebaseAuth.verifyIdToken(idToken);
-                logger.trace("Firebase token verified successfully for UID: {}", decodedToken.getUid());
+                logger.debug("Firebase token verified successfully for UID: {} for path {}", decodedToken.getUid(), path);
             } catch (FirebaseAuthException e) {
                 logger.warn("Firebase token verification failed for path {}: {}", path, e.getMessage());
+                SecurityContextHolder.clearContext();
+                logger.debug("Cleared SecurityContext due to invalid token for {}", path);
             }
         }
 
@@ -85,28 +93,38 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
             logger.debug("Token details - UID: {}, Email: {}", uid, email);
 
             if (email != null && !email.isEmpty()) {
-                logger.debug("Token verified in filter. Setting SecurityContext for user: {}", email);
+                if (SecurityContextHolder.getContext().getAuthentication() == null ||
+                    !SecurityContextHolder.getContext().getAuthentication().isAuthenticated() ||
+                    SecurityContextHolder.getContext().getAuthentication() instanceof AnonymousAuthenticationToken) {
 
-                UserDetails userDetails = new org.springframework.security.core.userdetails.User(
-                        email,
-                        "",
-                        Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER"))
-                );
+                    logger.info("Valid Firebase token found for {}. Setting SecurityContext for user: {}", path, email);
 
-                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities());
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authentication);
-                logger.trace("Set SecurityContext via token for {}", email);
+                    UserDetails userDetails = new org.springframework.security.core.userdetails.User(
+                            email,
+                            "",
+                            Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER"))
+                    );
+
+                    UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities());
+                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                    logger.info("Successfully set SecurityContext via token for user '{}' for path {}", email, path);
+                } else {
+                    logger.warn("Valid token found for {}, but SecurityContext already contained auth: {}. Not overwriting.", path, SecurityContextHolder.getContext().getAuthentication().getName());
+                }
 
             } else {
-                logger.warn("Firebase token for UID '{}' does not contain a valid email. Cannot set SecurityContext.", uid);
+                logger.warn("Firebase token for UID '{}' (path {}) does not contain a valid email. Clearing context.", uid, path);
+                SecurityContextHolder.clearContext();
             }
         } else {
-            logger.trace("No valid decoded token found for path: {}", path);
+            logger.debug("No valid decoded token processed for path: {}. Proceeding chain.", path);
         }
 
+        logger.debug("Proceeding filter chain for {}", path);
         filterChain.doFilter(request, response);
+        logger.debug("Filter chain completed for {}", path);
     }
 
     public void saveUserIfNotExists(String email) {
