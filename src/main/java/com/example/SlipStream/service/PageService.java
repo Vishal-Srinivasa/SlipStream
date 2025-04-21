@@ -4,13 +4,15 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
@@ -18,10 +20,8 @@ import com.example.SlipStream.model.ContainerPage;
 import com.example.SlipStream.model.ContentPage;
 import com.example.SlipStream.model.PageComponent;
 import com.example.SlipStream.repository.PageRepository;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
+import com.example.SlipStream.service.observer.PageSubject;
+import com.example.SlipStream.service.observer.PageSubjectManager;
 
 @Service
 public class PageService {
@@ -29,11 +29,13 @@ public class PageService {
     private static final Logger logger = LoggerFactory.getLogger(PageService.class);
     private final PageRepository pageRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final PageSubjectManager subjectManager;
 
     @Autowired
-    public PageService(PageRepository pageRepository, SimpMessagingTemplate messagingTemplate) {
+    public PageService(PageRepository pageRepository, SimpMessagingTemplate messagingTemplate, PageSubjectManager subjectManager) {
         this.pageRepository = pageRepository;
         this.messagingTemplate = messagingTemplate;
+        this.subjectManager = subjectManager;
     }
 
     public String createContentPage(String title, String content, String parentPageId, String owner)
@@ -113,7 +115,8 @@ public class PageService {
 
             boolean updated = pageRepository.updatePage(newContainerPage);
             if (updated) {
-                broadcastPageUpdate(parentPageId, newContainerPage);
+                PageSubject subject = subjectManager.getSubject(parentPageId);
+                subject.notifyObservers(newContainerPage);
             }
         } else if (parentPage instanceof ContainerPage) {
             ContainerPage containerParent = (ContainerPage) parentPage;
@@ -128,7 +131,8 @@ public class PageService {
 
                 boolean updated = pageRepository.updatePage(containerParent);
                 if (updated) {
-                    broadcastPageUpdate(parentPageId, containerParent);
+                    PageSubject subject = subjectManager.getSubject(parentPageId);
+                    subject.notifyObservers(containerParent);
                 }
             }
         }
@@ -293,7 +297,8 @@ public class PageService {
             boolean success = pageRepository.updatePage(page);
             if (success) {
                 logger.info("Successfully updated page {}", pageId);
-                broadcastPageUpdate(pageId, page);
+                PageSubject subject = subjectManager.getSubject(pageId);
+                subject.notifyObservers(page);
             } else {
                 logger.error("Repository failed to update page {}", pageId);
             }
@@ -426,7 +431,8 @@ public class PageService {
         boolean success = pageRepository.updatePage(page);
         if (success) {
             logger.info("Page {} shared with {} ({} access).", pageId, userEmailToShareWith, accessLevel);
-            broadcastPageUpdate(pageId, page);
+            PageSubject subject = subjectManager.getSubject(pageId);
+            subject.notifyObservers(page);
         }
         return success;
     }
@@ -442,7 +448,8 @@ public class PageService {
         boolean success = pageRepository.updatePage(page);
         if (success) {
             logger.info("Sharing removed for user {} from page {}.", userEmailToUnshare, pageId);
-            broadcastPageUpdate(pageId, page);
+            PageSubject subject = subjectManager.getSubject(pageId);
+            subject.notifyObservers(page);
         }
         return success;
     }
@@ -458,7 +465,8 @@ public class PageService {
         boolean success = pageRepository.updatePage(page);
         if (success) {
             logger.info("Page {} published successfully.", pageId);
-            broadcastPageUpdate(pageId, page);
+            PageSubject subject = subjectManager.getSubject(pageId);
+            subject.notifyObservers(page);
         }
         return success;
     }
@@ -474,26 +482,9 @@ public class PageService {
         boolean success = pageRepository.updatePage(page);
         if (success) {
             logger.info("Page {} unpublished successfully.", pageId);
-            broadcastPageUpdate(pageId, page);
+            PageSubject subject = subjectManager.getSubject(pageId);
+            subject.notifyObservers(page);
         }
         return success;
-    }
-
-    private void broadcastPageUpdate(String pageId, PageComponent page) {
-        String destination = "/topic/pages/" + pageId;
-        try {
-            Map<String, Object> updatePayload = Map.of(
-                "pageId", page.getPageId(),
-                "title", page.getTitle(),
-                "content", page.getContent(),
-                "lastUpdated", page.getLastUpdated(),
-                "isPublished", page.isPublished(),
-                "sharingInfo", page.getSharingInfo()
-            );
-            logger.info("Broadcasting update for page {} to {}", pageId, destination);
-            messagingTemplate.convertAndSend(destination, updatePayload);
-        } catch (Exception e) {
-            logger.error("Error broadcasting update for page {}: {}", pageId, e.getMessage(), e);
-        }
     }
 }
