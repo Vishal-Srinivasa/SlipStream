@@ -8,8 +8,11 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.Collections;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Repository;
+import org.slf4j.Logger; // Import Logger
+import org.slf4j.LoggerFactory; // Import LoggerFactory
 
 import com.example.SlipStream.model.ContainerPage;
 import com.example.SlipStream.model.ContentPage;
@@ -28,6 +31,7 @@ import com.google.cloud.firestore.WriteResult;
 public class FirebasePageRepository implements PageRepository {
 
     private static final String COLLECTION_NAME = "Pages";
+    private static final Logger logger = LoggerFactory.getLogger(FirebasePageRepository.class); // Add logger declaration
 
     @Override
     public String createPage(PageComponent page) throws ExecutionException, InterruptedException {
@@ -208,7 +212,67 @@ public class FirebasePageRepository implements PageRepository {
         return true;
     }
     
-    // Helper methods for conversion
+    @Override
+    public List<PageComponent> getPagesByIds(List<String> pageIds) throws ExecutionException, InterruptedException {
+        if (pageIds == null || pageIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        Firestore firestore = FirestoreClient.getFirestore();
+        List<PageComponent> pages = new ArrayList<>();
+        // Firestore 'in' query supports maximum 10 elements per query
+        // For simplicity, fetching one by one. Consider batching for larger lists.
+        for (String pageId : pageIds) {
+            try {
+                PageComponent page = getPage(pageId);
+                if (page != null) {
+                    pages.add(page);
+                } else {
+                    logger.warn("Page with ID {} not found while fetching by IDs.", pageId);
+                }
+            } catch (Exception e) {
+                 logger.error("Error fetching page with ID {} by IDs: {}", pageId, e.getMessage(), e);
+            }
+        }
+        return pages;
+    }
+
+    @Override
+    public List<PageComponent> findPagesByOwner(String ownerEmail) throws ExecutionException, InterruptedException {
+        Firestore firestore = FirestoreClient.getFirestore();
+        List<PageComponent> pages = new ArrayList<>();
+        Query query = firestore.collection(COLLECTION_NAME).whereEqualTo("owner", ownerEmail);
+        ApiFuture<QuerySnapshot> future = query.get();
+        List<QueryDocumentSnapshot> documents = future.get().getDocuments();
+        for (QueryDocumentSnapshot document : documents) {
+            pages.add(convertToPageComponent(document));
+        }
+        return pages;
+    }
+
+    @Override
+    public List<PageComponent> findPagesSharedWithUser(String userEmail) throws ExecutionException, InterruptedException {
+        Firestore firestore = FirestoreClient.getFirestore();
+        List<PageComponent> pages = new ArrayList<>();
+        // Firestore requires specific indexing for map field queries.
+        // Querying for the existence of the userEmail key in the sharingInfo map.
+        // Note: This might require a composite index in Firestore: (sharingInfo, ASCENDING)
+        // Or more specifically if querying by value: (sharingInfo.`userEmail`, ASCENDING) - but we just need existence.
+        // A simpler approach might be to fetch all pages and filter, but less efficient.
+        // Let's try querying where the userEmail field within sharingInfo is not null.
+        Query query = firestore.collection(COLLECTION_NAME).whereGreaterThan("sharingInfo." + userEmail, ""); // Check if key exists and has a value
+        ApiFuture<QuerySnapshot> future = query.get();
+        List<QueryDocumentSnapshot> documents = future.get().getDocuments();
+        for (QueryDocumentSnapshot document : documents) {
+            PageComponent page = convertToPageComponent(document);
+            // Double check in code as Firestore query might be tricky
+            if (page.getSharingInfo() != null && page.getSharingInfo().containsKey(userEmail)) {
+                 pages.add(page);
+            }
+        }
+        return pages;
+    }
+    
+        // Helper methods for conversion
     private Map<String, Object> convertToMap(PageComponent page) {
         Map<String, Object> map = new HashMap<>();
         map.put("pageId", page.getPageId());
@@ -280,5 +344,60 @@ public class FirebasePageRepository implements PageRepository {
         }
         
         return component;
+    }
+
+    @Override
+    public boolean sharePageWithUser(String pageId, String userEmail, String accessLevel) throws ExecutionException, InterruptedException {
+        if (!"view".equals(accessLevel) && !"edit".equals(accessLevel)) {
+            logger.error("Invalid access level '{}' provided for sharing page {}", accessLevel, pageId);
+            return false; // Or throw IllegalArgumentException
+        }
+
+        Firestore firestore = FirestoreClient.getFirestore();
+        DocumentReference docRef = firestore.collection(COLLECTION_NAME).document(pageId);
+
+        // Use dot notation to update a specific field within the map
+        String fieldPath = "sharingInfo." + userEmail;
+
+        // Prepare updates map
+        Map<String, Object> updates = new HashMap<>();
+        updates.put(fieldPath, accessLevel);
+        updates.put("lastUpdated", new Date()); // Also update the lastUpdated timestamp
+
+        logger.info("Updating sharing for page {}: Setting {} = {}", pageId, fieldPath, accessLevel);
+        ApiFuture<WriteResult> future = docRef.update(updates);
+
+        try {
+            future.get(); // Wait for operation to complete
+            logger.info("Successfully updated sharing for page {}", pageId);
+            return true;
+        } catch (ExecutionException | InterruptedException e) {
+            logger.error("Failed to update sharing for page {}: {}", pageId, e.getMessage(), e);
+            throw e; // Re-throw exception
+        } catch (Exception e) {
+             logger.error("Unexpected error updating sharing for page {}: {}", pageId, e.getMessage(), e);
+             return false;
+        }
+    }
+
+    @Override
+    public List<PageComponent> findPagesByWorkspaceIds(List<String> workspaceIds) throws ExecutionException, InterruptedException {
+        if (workspaceIds == null || workspaceIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        
+        Firestore firestore = FirestoreClient.getFirestore();
+        List<PageComponent> pages = new ArrayList<>();
+        
+        // Query for pages that belong to any of the provided workspace IDs
+        Query query = firestore.collection(COLLECTION_NAME).whereIn("workspaceId", workspaceIds);
+        ApiFuture<QuerySnapshot> future = query.get();
+        
+        List<QueryDocumentSnapshot> documents = future.get().getDocuments();
+        for (QueryDocumentSnapshot document : documents) {
+            pages.add(convertToPageComponent(document));
+        }
+        
+        return pages;
     }
 }
