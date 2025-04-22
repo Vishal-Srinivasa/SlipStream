@@ -202,7 +202,11 @@
                             </div>
                             <div class="workspace-pages">
                                 <ul th:if="${workspacePageTrees != null and workspacePageTrees[workspace.id] != null and !#lists.isEmpty(workspacePageTrees[workspace.id])}" class="workspace-page-list">
-                                    <th:block th:each="node : ${workspacePageTrees[workspace.id]}" th:insert="~{:: pageTree(${node}, 0)}" />
+                                    <th:block th:each="node : ${workspacePageTrees[workspace.id]}">
+                                        <th:block th:if="${node != null and node.page != null and (node.page.parentPageId == null or #strings.isEmpty(node.page.parentPageId))}">
+                                            <th:block th:insert="~{:: pageTree(${node}, 0)}" />
+                                        </th:block>
+                                    </th:block>
                                 </ul>
                                 <div th:if="${workspacePageTrees == null or workspacePageTrees[workspace.id] == null or #lists.isEmpty(workspacePageTrees[workspace.id])}" class="text-xs text-gray-500 pl-5 pt-1">
                                     No pages in this workspace yet.
@@ -226,7 +230,11 @@
                 </div>
                 <div th:unless="${#lists.isEmpty(independentPageNodes)}">
                     <ul>
-                        <th:block th:each="node : ${independentPageNodes}" th:insert="~{:: pageTree(${node}, 0)}" />
+                        <th:block th:each="node : ${independentPageNodes}">
+                            <th:block th:if="${node != null and node.page != null and (node.page.parentPageId == null or #strings.isEmpty(node.page.parentPageId))}">
+                                <th:block th:insert="~{:: pageTree(${node}, 0)}" />
+                            </th:block>
+                        </th:block>
                     </ul>
                 </div>
             </div>
@@ -277,7 +285,7 @@
                 </div>
                 <div class="action-buttons">
                     <a th:if="${!node.page.leaf}"
-                       th:href="@{'/view/pages/create?parentId=' + ${node.page.pageId} + (${node.page.workspaceId != null ? '&workspaceId=' + node.page.workspaceId : ''})}"
+                       th:href="@{/view/pages/create(parentId=${node.page.pageId}, workspaceId=${node.page.workspaceId})}"
                        class="create-page-button mr-2">
                         <i class="fas fa-plus"></i> Add Child
                     </a>

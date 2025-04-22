@@ -167,29 +167,29 @@ public class DashboardController {
                 if (page == null || page.getPageId() == null) continue;
 
                 String pageId = page.getPageId();
-                if (assignedPageIds.contains(pageId)) {
-                    continue;
-                }
+                if (page.getParentPageId() == null || page.getParentPageId().isEmpty()) {
+                    String effectiveWorkspaceId = findWorkspaceIdForPage(page, allPagesMap, rootPageToWorkspaceIdMap);
 
-                String effectiveWorkspaceId = findWorkspaceIdForPage(page, allPagesMap, rootPageToWorkspaceIdMap);
-
-                if (effectiveWorkspaceId != null) {
-                    pagesByWorkspaceId.computeIfAbsent(effectiveWorkspaceId, k -> new ArrayList<>()).add(page);
-                    assignedPageIds.add(pageId);
-                    logger.trace("Categorized page {} into workspace {}", pageId, effectiveWorkspaceId);
+                    if (effectiveWorkspaceId != null) {
+                        pagesByWorkspaceId.computeIfAbsent(effectiveWorkspaceId, k -> new ArrayList<>()).add(page);
+                        assignedPageIds.add(pageId);
+                        logger.trace("Categorized root page {} into workspace {}", pageId, effectiveWorkspaceId);
+                    }
                 }
             }
 
             for (PageComponent page : allAccessiblePages) {
                 if (page == null || page.getPageId() == null) continue;
                 String pageId = page.getPageId();
-                if (!assignedPageIds.contains(pageId) && page.getOwner() != null && page.getOwner().equals(currentUserEmail)) {
+                if (!assignedPageIds.contains(pageId) &&
+                    (page.getParentPageId() == null || page.getParentPageId().isEmpty()) &&
+                    page.getOwner() != null && page.getOwner().equals(currentUserEmail)) {
                     independentPages.add(page);
-                    logger.trace("Categorized page {} as independent (owned by user)", pageId);
+                    logger.trace("Categorized root page {} as independent (owned by user)", pageId);
                 }
             }
 
-            logger.info("Categorized pages: {} workspaces with pages, {} independent pages.",
+            logger.info("Filtered pages: {} workspaces with root pages, {} independent root pages.",
                     pagesByWorkspaceId.size(), independentPages.size());
             logger.debug("Workspace IDs with pages found: {}", pagesByWorkspaceId.keySet());
             pagesByWorkspaceId.forEach((wsId, pages) -> logger.debug("Workspace {}: {} pages", wsId, pages.size()));
@@ -198,20 +198,20 @@ public class DashboardController {
             Map<String, List<PageNode>> workspacePageTrees = new HashMap<>();
             for (Map.Entry<String, List<PageComponent>> entry : pagesByWorkspaceId.entrySet()) {
                 String workspaceId = entry.getKey();
-                List<PageComponent> workspacePages = entry.getValue();
-                if (!workspacePages.isEmpty()) {
-                    logger.debug("Building tree for workspace {}", workspaceId);
-                    List<PageNode> pageNodes = PageNode.buildTree(workspacePages);
+                List<PageComponent> workspaceRootPages = entry.getValue();
+                if (!workspaceRootPages.isEmpty()) {
+                    logger.debug("Building tree for workspace {} using only root pages.", workspaceId);
+                    List<PageNode> pageNodes = PageNode.buildTree(workspaceRootPages);
                     workspacePageTrees.put(workspaceId, pageNodes);
-                    logger.info("Built page tree for workspace {} with {} root nodes", workspaceId, pageNodes.size());
+                    logger.info("Built page tree for workspace {} with {} root nodes (children might be missing)", workspaceId, pageNodes.size());
                 }
             }
             model.addAttribute("workspacePageTrees", workspacePageTrees);
 
-            logger.debug("Building tree for independent pages");
+            logger.debug("Building tree for independent pages using only root pages");
             List<PageNode> independentPageNodes = PageNode.buildTree(independentPages);
             model.addAttribute("independentPageNodes", independentPageNodes);
-            logger.info("Built independent page tree with {} root nodes", independentPageNodes.size());
+            logger.info("Built independent page tree with {} root nodes (children might be missing)", independentPageNodes.size());
 
             logger.debug("Adding to model: workspacePageTrees size = {}, independentPageNodes size = {}",
                     workspacePageTrees.size(), independentPageNodes.size());
