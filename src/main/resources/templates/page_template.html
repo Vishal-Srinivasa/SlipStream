@@ -598,10 +598,14 @@
             }
         }
 
-        if (needsReload && window.editor) {
-            console.log("[handlePageUpdate] Reloading editor content...");
+        const activeElementInsideEditor = document.activeElement && document.activeElement.closest('#editor');
+
+        if (needsReload && window.editor && !activeElementInsideEditor) {
+            console.log("[handlePageUpdate] Reloading editor content (active element is outside editor)...");
             window.editor.initializeEditor();
             console.log("[handlePageUpdate] Editor content reloaded.");
+        } else if (needsReload && activeElementInsideEditor) {
+            console.log("[handlePageUpdate] Content changed, but skipping reload because an element inside the editor is focused.");
         } else if (needsReload) {
              console.warn("[handlePageUpdate] Content changed but editor instance not found.");
         }
@@ -691,17 +695,22 @@
             if (match && match[0] === blockContent.trim()) {
               const title = match[1];
               const id = match[2];
-              block = this.addBlock(null, id, title);
+              block = this.addBlock(null); 
+              block.dataset.subpageId = id; 
+              block.dataset.subpageTitle = title; 
               const content = block.querySelector('.block-content');
-              content.textContent = blockContent;
-              this.updateBlockType(block);
-              this.switchToRenderMode(block);
+              content.textContent = blockContent; 
+              const placeholder = block.querySelector('.block-placeholder');
+              placeholder.innerHTML = `<a href="/view/pages/${id}" title="Go to page: ${title}">📄</a>`; 
+              
+              console.log(`[loadContent] Identified subpage link: ID=${id}, Title=${title}. Block ID: ${block.id}`);
+              this.switchToRenderMode(block); 
             } else {
               block = this.addBlock(null);
               const content = block.querySelector('.block-content');
               content.textContent = blockContent;
-              this.updateBlockType(block);
-              this.switchToRenderMode(block);
+              this.updateBlockType(block); 
+              this.switchToRenderMode(block); 
             }
           }
         });
@@ -762,14 +771,7 @@
 
         if (renderedContent) {
           renderedContent.addEventListener('click', (e) => {
-            if (block.dataset.subpageId) {
-                if (e.target.tagName === 'A' && e.target.href.includes('/view/pages/')) {
-                } else {
-                    e.preventDefault();
-                }
-            } else {
-                this.switchToEditMode(block);
-            }
+            this.switchToEditMode(block);
           });
         }
 
@@ -778,16 +780,6 @@
         });
 
         content.addEventListener('blur', () => {
-          if (block.dataset.subpageId) {
-            const expectedTitle = block.dataset.subpageTitle || 'Untitled Page';
-            const expectedId = block.dataset.subpageId;
-            const expectedMarkdown = `[📄 ${expectedTitle}](/view/pages/${expectedId})`;
-            if (content.textContent !== expectedMarkdown) {
-              console.warn(`Subpage link block ${expectedId} content modified, restoring.`);
-              content.textContent = expectedMarkdown;
-            }
-          }
-
           if (!this.commandMenu.contains(document.activeElement)) {
             this.switchToRenderMode(block);
           }
@@ -842,19 +834,6 @@
         const blocks = Array.from(this.container.querySelectorAll('.block'));
         let title = window.PAGE_TITLE;
         let contentBlocks = blocks;
-
-        blocks.forEach(block => {
-            if (block.dataset.subpageId) {
-                const content = block.querySelector('.block-content');
-                const expectedTitle = block.dataset.subpageTitle || 'Untitled Page';
-                const expectedId = block.dataset.subpageId;
-                const expectedMarkdown = `[📄 ${expectedTitle}](/view/pages/${expectedId})`;
-                if (content.textContent !== expectedMarkdown) {
-                    console.warn(`Correcting subpage link content for ${expectedId} before saving.`);
-                    content.textContent = expectedMarkdown;
-                }
-            }
-        });
 
         if (blocks.length > 0) {
             const firstBlockContent = blocks[0].querySelector('.block-content');
@@ -914,10 +893,6 @@
             console.warn("[switchToEditMode] Called with null block.");
             return;
         }
-        if (block.dataset.subpageId) {
-            console.log("[switchToEditMode] Attempted to edit subpage link block. Action prevented.");
-            return;
-        }
         const content = block.querySelector('.block-content');
         const renderedContent = block.querySelector('.markdown-rendered');
 
@@ -942,24 +917,48 @@
       switchToRenderMode(block) {
         const content = block.querySelector('.block-content');
         const renderedContent = block.querySelector('.markdown-rendered');
-        if (content.textContent.trim() && renderedContent) {
-          if (block.dataset.subpageId) {
-              const title = block.dataset.subpageTitle || 'Untitled Page';
-              const id = block.dataset.subpageId;
-              renderedContent.innerHTML = `<a href="/view/pages/${id}" class="text-blue-600 hover:underline">📄 ${title}</a>`;
-          } else {
-              renderedContent.innerHTML = this.converter.makeHtml(content.textContent);
-          }
+        const blockIdForLog = block.id || '(no id)';
 
-          if (content.classList.contains('code-block')) {
-            renderedContent.classList.add('code-block');
-          }
-          content.classList.add('hidden');
-          renderedContent.classList.remove('hidden');
-        } else if (renderedContent) {
-            renderedContent.innerHTML = '';
-            renderedContent.classList.add('hidden');
-            content.classList.remove('hidden');
+        if (document.activeElement === content) {
+            console.log(`[switchToRenderMode] Skipping render for focused block: ${blockIdForLog}`);
+            return;
+        }
+
+        if (!content || !renderedContent) {
+            console.error(`[switchToRenderMode] Missing content or renderedContent element for block ${blockIdForLog}`);
+            return;
+        }
+
+        if (block.dataset.subpageId) {
+            console.log(`[switchToRenderMode] Block ${blockIdForLog} IS a subpage link.`);
+            const title = block.dataset.subpageTitle || 'Untitled Page';
+            const id = block.dataset.subpageId;
+            const linkHtml = `<a href="/view/pages/${id}" class="text-blue-600 hover:underline">📄 ${title}</a>`;
+            console.log(`[switchToRenderMode] Setting rendered HTML for subpage ${blockIdForLog}: ${linkHtml}`);
+            renderedContent.innerHTML = linkHtml;
+            
+            console.log(`[switchToRenderMode] Hiding content, showing rendered for subpage ${blockIdForLog}`);
+            content.classList.add('hidden');
+            renderedContent.classList.remove('hidden');
+        } 
+        else {
+            const hasContent = content.textContent.trim();
+            console.log(`[switchToRenderMode] Block ${blockIdForLog} is normal markdown. Has content? ${!!hasContent}`);
+            if (hasContent) {
+                console.log(`[switchToRenderMode] Converting normal markdown for ${blockIdForLog}...`);
+                renderedContent.innerHTML = this.converter.makeHtml(content.textContent);
+                if (content.classList.contains('code-block')) {
+                    renderedContent.classList.add('code-block');
+                }
+                console.log(`[switchToRenderMode] Hiding content, showing rendered for normal block ${blockIdForLog}`);
+                content.classList.add('hidden');
+                renderedContent.classList.remove('hidden');
+            } else {
+                console.log(`[switchToRenderMode] Block ${blockIdForLog} is normal but empty. Hiding rendered, showing content.`);
+                renderedContent.innerHTML = '';
+                renderedContent.classList.add('hidden');
+                content.classList.remove('hidden'); 
+            }
         }
       }
 
@@ -999,11 +998,18 @@
       }
 
       updateBlockType(block) {
+        if (block.dataset.subpageId) {
+            console.log(`[updateBlockType] Skipping update for subpage link block ${block.id}`);
+            return; 
+        }
+
         const content = block.querySelector('.block-content');
         const placeholder = block.querySelector('.block-placeholder');
         const text = content.textContent;
-        content.className = 'block-content';
-        placeholder.textContent = '✦';
+        
+        content.className = 'block-content'; 
+        placeholder.textContent = '✦'; 
+
         if (text.startsWith('# ')) {
           content.classList.add('heading-1');
           placeholder.textContent = 'H1';
@@ -1027,7 +1033,7 @@
           placeholder.textContent = '•';
           this.blockTypes.set(block.id || this.assignBlockId(block), 'bullet');
         } else {
-          this.blockTypes.delete(block.id || '');
+          this.blockTypes.delete(block.id || ''); 
         }
       }
 
@@ -1141,13 +1147,17 @@
       applyCommand(type) {
         if (!this.activeBlock) return;
         const content = this.activeBlock.querySelector('.block-content');
+        
+        content.textContent = ''; 
+        
         let prefix = '';
         if (type === 'page') {
           this.hideCommandMenu();
           window.currentBlock = this.activeBlock;
           createNewPage();
-          return;
+          return; 
         }
+        
         switch(type) {
           case 'h1':
             prefix = '# ';
@@ -1172,16 +1182,19 @@
             prefix = '- ';
             break;
         }
-        content.textContent = '';
-        content.textContent = prefix;
+        
+        content.textContent = prefix; 
+        
         this.updateBlockType(this.activeBlock);
         this.blockTypes.set(this.activeBlock.id || this.assignBlockId(this.activeBlock), type);
         content.focus();
+        
         if (type === 'code') {
-          this.placeCursorAtPosition(content, 4);
+          this.placeCursorAtPosition(content, 4); 
         } else {
           this.placeCursorAtPosition(content, prefix.length);
         }
+        
         this.hideCommandMenu();
       }
 
@@ -1220,7 +1233,6 @@
             block.dataset.subpageId = subPageId;
             block.dataset.subpageTitle = subPageTitle || 'Untitled Page';
             block.querySelector('.block-placeholder').innerHTML = `<a href="/view/pages/${subPageId}" title="Go to page: ${subPageTitle || 'Untitled Page'}">📄</a>`;
-            content.setAttribute('contenteditable', 'false');
         }
 
         if (afterBlock) {
@@ -1363,8 +1375,21 @@
         e.preventDefault();
         const title = document.getElementById('page-title').value.trim();
         const parentPageId = window.PAGE_ID;
-        console.log("Creating new page with parent ID:", parentPageId);
+        console.log("[createNewPage] Creating new page with parent ID:", parentPageId);
         if (!title) return;
+
+        if (!window.currentBlock || !window.editor) {
+             console.error("[createNewPage] Error: currentBlock or editor context is missing.");
+             alert("Error: Could not determine where to place the new page link.");
+             const openModal = document.getElementById('create-page-form')?.closest('.fixed');
+             if (openModal && document.body.contains(openModal)) {
+                 document.body.removeChild(openModal);
+             }
+             return;
+        }
+        const targetBlock = window.currentBlock; 
+        const blockIdForLog = targetBlock.id || '(no id)';
+        console.log(`[createNewPage] Target block for link embedding: ${blockIdForLog}`);
 
         try {
             const response = await fetchWithAuth('/api/pages', {
@@ -1376,7 +1401,7 @@
                     title: title,
                     content: "", 
                     parentPageId: parentPageId,
-                    type: 'content'
+                    type: 'content' 
                 })
             });
 
@@ -1385,40 +1410,76 @@
                 throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
             }
 
-            const newPageId = await response.text();
-            document.body.removeChild(modal);
-
-            if (window.currentBlock && window.editor) {
-                window.currentBlock.dataset.subpageId = newPageId;
-                window.currentBlock.dataset.subpageTitle = title;
-
-                const placeholder = window.currentBlock.querySelector('.block-placeholder');
-                const content = window.currentBlock.querySelector('.block-content');
-
-                placeholder.innerHTML = `<a href="/view/pages/${newPageId}" title="Go to page: ${title}">📄</a>`;
-
-                content.textContent = `[📄 ${title}](/view/pages/${newPageId})`;
-                content.setAttribute('contenteditable', 'false');
-
-                window.editor.updateBlockType(window.currentBlock);
-                window.editor.switchToRenderMode(window.currentBlock);
-
-                await window.editor.saveDocument();
-
-                window.currentBlock = null;
+            const newPageId = await response.text(); 
+            console.log("[createNewPage] New page created with ID:", newPageId);
+            
+            const modal = document.getElementById('create-page-form')?.closest('.fixed');
+            if (modal && document.body.contains(modal)) {
+                 document.body.removeChild(modal);
             }
+
+            console.log(`[createNewPage] Updating block ${blockIdForLog} with new page link:`, newPageId, title);
+            
+            targetBlock.dataset.subpageId = newPageId;
+            targetBlock.dataset.subpageTitle = title;
+
+            const placeholder = targetBlock.querySelector('.block-placeholder');
+            const content = targetBlock.querySelector('.block-content');
+            const renderedContent = targetBlock.querySelector('.markdown-rendered'); 
+
+            if (!placeholder || !content || !renderedContent) {
+                console.error(`[createNewPage] Critical error: Block ${blockIdForLog} is missing essential elements (placeholder, content, or renderedContent).`);
+                alert("Error: Failed to update the block structure for the new page link.");
+                window.currentBlock = null; 
+                return;
+            }
+
+            if (placeholder) {
+                placeholder.innerHTML = `<a href="/view/pages/${newPageId}" title="Go to page: ${title}">📄</a>`;
+                console.log(`[createNewPage] Updated placeholder for ${blockIdForLog}`);
+            }
+
+            if (content) {
+                const markdownLink = `[📄 ${title}](/view/pages/${newPageId})`;
+                content.textContent = markdownLink;
+                content.classList.remove('hidden'); 
+                console.log(`[createNewPage] Set content text for ${blockIdForLog}: ${content.textContent}`); 
+            }
+            
+            window.editor.updateBlockType(targetBlock); 
+            
+            console.log(`[createNewPage] Before switchToRenderMode for ${blockIdForLog}:`);
+            console.log(`  - dataset.subpageId: ${targetBlock.dataset.subpageId}`);
+            console.log(`  - dataset.subpageTitle: ${targetBlock.dataset.subpageTitle}`);
+            console.log(`  - content.textContent: "${content.textContent}"`);
+            console.log(`  - content hidden: ${content.classList.contains('hidden')}`);
+            console.log(`  - renderedContent hidden: ${renderedContent.classList.contains('hidden')}`);
+
+            console.log(`[createNewPage] Calling switchToRenderMode for ${blockIdForLog}`);
+            window.editor.switchToRenderMode(targetBlock);
+            
+            console.log(`[createNewPage] After switchToRenderMode for ${blockIdForLog}:`);
+            console.log(`  - content hidden: ${content.classList.contains('hidden')}`);
+            console.log(`  - renderedContent hidden: ${renderedContent.classList.contains('hidden')}`);
+            console.log(`  - renderedContent.innerHTML: ${renderedContent.innerHTML}`);
+
+            console.log("[createNewPage] Saving parent document after adding subpage link.");
+            await window.editor.saveDocument();
+
+            window.currentBlock = null;
+            console.log("[createNewPage] Block update complete, currentBlock reset.");
 
             if (confirm(`Page '${title}' created! Do you want to open it now?`)) {
                 window.location.href = `/view/pages/${newPageId}`;
             }
         } catch (error) {
-            console.error('Error:', error);
+            console.error('[createNewPage] Error creating page or updating block:', error);
             alert(`An error occurred while creating the page: ${error.message}`);
             const modal = document.getElementById('create-page-form')?.closest('.fixed');
             if (modal && document.body.contains(modal)) {
                 document.body.removeChild(modal);
             }
-            window.currentBlock = null;
+            window.currentBlock = null; 
         }
       });
 
@@ -1427,7 +1488,7 @@
         if (modal && document.body.contains(modal)) {
             document.body.removeChild(modal);
         }
-        window.currentBlock = null;
+        window.currentBlock = null; 
       });
     }
 
