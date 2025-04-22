@@ -164,4 +164,50 @@ public class WorkspaceController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "An unexpected error occurred."));
         }
     }
+
+    // --- Add Member to Workspace ---
+    @PostMapping("/{workspaceId}/members")
+    @ResponseBody
+    public ResponseEntity<?> addMemberToWorkspace(@PathVariable String workspaceId, @RequestBody Map<String, String> payload) {
+        String currentUserEmail = getCurrentUserEmail();
+        if (currentUserEmail == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "User not authenticated"));
+        }
+
+        String memberEmail = payload.get("email");
+        if (memberEmail == null || memberEmail.trim().isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Member email cannot be empty"));
+        }
+        memberEmail = memberEmail.trim();
+
+        try {
+            boolean added = workspaceService.addMember(workspaceId, memberEmail);
+            if (added) {
+                logger.info("Member {} added to workspace {} by user {}", memberEmail, workspaceId, currentUserEmail);
+                Workspace ws = workspaceService.getWorkspaceById(workspaceId);
+                if (ws != null && ws.getMembers().contains(memberEmail)) {
+                    return ResponseEntity.ok(Map.of("message", "Member '" + memberEmail + "' added or already present in the workspace."));
+                } else {
+                    logger.warn("Member {} reported as added to workspace {} but not found in member list.", memberEmail, workspaceId);
+                    return ResponseEntity.ok(Map.of("message", "Member '" + memberEmail + "' processed."));
+                }
+            } else {
+                logger.warn("Failed to add member {} to workspace {} (user {}) - service returned false.", memberEmail, workspaceId, currentUserEmail);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Could not add member. Workspace might not exist or another issue occurred."));
+            }
+        } catch (SecurityException | AccessDeniedException e) {
+            logger.warn("Access Denied: User {} attempted to add member {} to workspace {}: {}", currentUserEmail, memberEmail, workspaceId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access Denied. " + e.getMessage()));
+        } catch (ExecutionException | InterruptedException e) {
+            logger.error("Error adding member {} to workspace {}: {}", memberEmail, workspaceId, e.getMessage(), e);
+            Thread.currentThread().interrupt();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Server error occurred while adding member."));
+        } catch (IllegalArgumentException e) {
+            logger.warn("Error adding member {} to workspace {}: {}", memberEmail, workspaceId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Unexpected error adding member {} to workspace {}: {}", memberEmail, workspaceId, e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "An unexpected error occurred."));
+        }
+    }
 }

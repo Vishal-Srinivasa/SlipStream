@@ -1,9 +1,9 @@
 package com.example.SlipStream.controller;
 
 import com.example.SlipStream.model.PageComponent;
-import com.example.SlipStream.model.Workspace; // Import Workspace
+import com.example.SlipStream.model.Workspace;
 import com.example.SlipStream.service.PageService;
-import com.example.SlipStream.service.WorkspaceService; // Import WorkspaceService
+import com.example.SlipStream.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,13 +14,16 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.util.ArrayList;
-import java.util.Collections; // Import Collections
-import java.util.Comparator; // Import Comparator
-import java.util.HashMap; // Import HashMap
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -29,16 +32,17 @@ import java.util.stream.Collectors;
 public class DashboardController {
 
     private static final Logger logger = LoggerFactory.getLogger(DashboardController.class);
-    private final PageService pageService;
-    private final WorkspaceService workspaceService; // Add WorkspaceService
 
-    // Define PageNode inner class
+    private final WorkspaceService workspaceService;
+    private final PageService pageService;
+
     public static class PageNode {
-        PageComponent page;
-        List<PageNode> children = new ArrayList<>();
+        private PageComponent page;
+        private List<PageNode> children;
 
         public PageNode(PageComponent page) {
             this.page = page;
+            this.children = new ArrayList<>();
         }
 
         public PageComponent getPage() {
@@ -53,19 +57,231 @@ public class DashboardController {
             this.children.add(child);
         }
 
-        // Recursive sort method
-        public void sortChildrenRecursively(Comparator<PageNode> comparator) {
-            this.children.sort(comparator);
-            for (PageNode child : this.children) {
-                child.sortChildrenRecursively(comparator);
+        public static List<PageNode> buildTree(List<PageComponent> pages) {
+            if (pages == null || pages.isEmpty()) {
+                return new ArrayList<>();
+            }
+
+            List<PageNode> roots = new ArrayList<>();
+            Map<String, PageNode> nodeMap = new HashMap<>();
+
+            for (PageComponent page : pages) {
+                if (page != null && page.getPageId() != null) {
+                    nodeMap.put(page.getPageId(), new PageNode(page));
+                } else {
+                    logger.warn("Skipping null page or page with null ID during tree build (node map creation).");
+                }
+            }
+
+            for (PageComponent page : pages) {
+                if (page == null || page.getPageId() == null) continue;
+
+                PageNode node = nodeMap.get(page.getPageId());
+                if (node == null) continue;
+
+                String parentId = page.getParentPageId();
+                if (parentId != null && !parentId.isEmpty() && nodeMap.containsKey(parentId)) {
+                    PageNode parentNode = nodeMap.get(parentId);
+                    if (parentNode != null) {
+                        parentNode.addChild(node);
+                    } else {
+                        logger.warn("Page {} has parentId {} which is not in the current tree's page list. Treating as root.", page.getPageId(), parentId);
+                        roots.add(node);
+                    }
+                } else {
+                    roots.add(node);
+                }
+            }
+
+            roots.sort(Comparator.comparing(n -> n.getPage().getTitle() != null ? n.getPage().getTitle() : "", String.CASE_INSENSITIVE_ORDER));
+            sortChildrenRecursive(roots);
+
+            logger.debug("Built tree with {} root nodes.", roots.size());
+            return roots;
+        }
+
+        private static void sortChildrenRecursive(List<PageNode> nodes) {
+            for (PageNode node : nodes) {
+                if (!node.getChildren().isEmpty()) {
+                    node.getChildren().sort(Comparator.comparing(n -> n.getPage().getTitle() != null ? n.getPage().getTitle() : "", String.CASE_INSENSITIVE_ORDER));
+                    sortChildrenRecursive(node.getChildren());
+                }
             }
         }
     }
 
     @Autowired
-    public DashboardController(PageService pageService, WorkspaceService workspaceService) { // Inject WorkspaceService
+    public DashboardController(WorkspaceService workspaceService, PageService pageService) {
+        this.workspaceService = workspaceService;
         this.pageService = pageService;
-        this.workspaceService = workspaceService; // Initialize WorkspaceService
+    }
+
+    @GetMapping
+    public String showDashboard(Model model, RedirectAttributes redirectAttributes) {
+        String currentUserEmail = getCurrentUserEmail();
+        if (currentUserEmail == null) {
+            logger.warn("User not authenticated, redirecting to login.");
+            redirectAttributes.addFlashAttribute("login_error", "Please log in to view the dashboard.");
+            return "redirect:/login";
+        }
+
+        model.addAttribute("currentUserEmail", currentUserEmail);
+        model.addAttribute("workspaces", Collections.emptyList());
+        model.addAttribute("workspacePageTrees", Collections.emptyMap());
+        model.addAttribute("independentPageNodes", Collections.emptyList());
+        model.addAttribute("sharedPages", Collections.emptyList());
+
+        try {
+            List<Workspace> workspaces = workspaceService.getWorkspacesForUser(currentUserEmail);
+            model.addAttribute("workspaces", workspaces);
+            logger.info("Fetched {} workspaces for user {}", workspaces.size(), currentUserEmail);
+
+            logger.debug("Attempting to fetch all accessible pages for user {}", currentUserEmail);
+            List<PageComponent> allAccessiblePages = pageService.getAllAccessiblePagesForUser(currentUserEmail);
+            logger.info("Fetched {} total accessible pages for user {}", allAccessiblePages.size(), currentUserEmail);
+
+            Map<String, PageComponent> allPagesMap = allAccessiblePages.stream()
+                .filter(p -> p != null && p.getPageId() != null)
+                .collect(Collectors.toMap(PageComponent::getPageId, p -> p, (p1, p2) -> p1));
+
+            Map<String, String> rootPageToWorkspaceIdMap = new HashMap<>();
+            for (Workspace ws : workspaces) {
+                if (ws.getRootPageIds() != null) {
+                    for (String rootPageId : ws.getRootPageIds()) {
+                        if (rootPageId != null && allPagesMap.containsKey(rootPageId)) {
+                            rootPageToWorkspaceIdMap.put(rootPageId, ws.getId());
+                            logger.trace("Mapped root page {} to workspace {}", rootPageId, ws.getId());
+                        } else {
+                            logger.warn("Workspace {} lists root page ID {} which is null, not accessible, or not found.", ws.getId(), rootPageId);
+                        }
+                    }
+                }
+            }
+            logger.debug("Created root page to workspace ID map with {} entries.", rootPageToWorkspaceIdMap.size());
+
+            Map<String, List<PageComponent>> pagesByWorkspaceId = new HashMap<>();
+            List<PageComponent> independentPages = new ArrayList<>();
+            Set<String> assignedPageIds = new HashSet<>();
+
+            for (PageComponent page : allAccessiblePages) {
+                if (page == null || page.getPageId() == null) continue;
+
+                String pageId = page.getPageId();
+                if (assignedPageIds.contains(pageId)) {
+                    continue;
+                }
+
+                String effectiveWorkspaceId = findWorkspaceIdForPage(page, allPagesMap, rootPageToWorkspaceIdMap);
+
+                if (effectiveWorkspaceId != null) {
+                    pagesByWorkspaceId.computeIfAbsent(effectiveWorkspaceId, k -> new ArrayList<>()).add(page);
+                    assignedPageIds.add(pageId);
+                    logger.trace("Categorized page {} into workspace {}", pageId, effectiveWorkspaceId);
+                }
+            }
+
+            for (PageComponent page : allAccessiblePages) {
+                if (page == null || page.getPageId() == null) continue;
+                String pageId = page.getPageId();
+                if (!assignedPageIds.contains(pageId) && page.getOwner() != null && page.getOwner().equals(currentUserEmail)) {
+                    independentPages.add(page);
+                    logger.trace("Categorized page {} as independent (owned by user)", pageId);
+                }
+            }
+
+            logger.info("Categorized pages: {} workspaces with pages, {} independent pages.",
+                    pagesByWorkspaceId.size(), independentPages.size());
+            logger.debug("Workspace IDs with pages found: {}", pagesByWorkspaceId.keySet());
+            pagesByWorkspaceId.forEach((wsId, pages) -> logger.debug("Workspace {}: {} pages", wsId, pages.size()));
+            logger.debug("Independent pages count: {}", independentPages.size());
+
+            Map<String, List<PageNode>> workspacePageTrees = new HashMap<>();
+            for (Map.Entry<String, List<PageComponent>> entry : pagesByWorkspaceId.entrySet()) {
+                String workspaceId = entry.getKey();
+                List<PageComponent> workspacePages = entry.getValue();
+                if (!workspacePages.isEmpty()) {
+                    logger.debug("Building tree for workspace {}", workspaceId);
+                    List<PageNode> pageNodes = PageNode.buildTree(workspacePages);
+                    workspacePageTrees.put(workspaceId, pageNodes);
+                    logger.info("Built page tree for workspace {} with {} root nodes", workspaceId, pageNodes.size());
+                }
+            }
+            model.addAttribute("workspacePageTrees", workspacePageTrees);
+
+            logger.debug("Building tree for independent pages");
+            List<PageNode> independentPageNodes = PageNode.buildTree(independentPages);
+            model.addAttribute("independentPageNodes", independentPageNodes);
+            logger.info("Built independent page tree with {} root nodes", independentPageNodes.size());
+
+            logger.debug("Adding to model: workspacePageTrees size = {}, independentPageNodes size = {}",
+                    workspacePageTrees.size(), independentPageNodes.size());
+
+            List<PageComponent> sharedPages = pageService.getSharedPagesForUser(currentUserEmail);
+            sharedPages.sort(Comparator.comparing(p -> p.getTitle() != null ? p.getTitle() : "", String.CASE_INSENSITIVE_ORDER));
+            model.addAttribute("sharedPages", sharedPages);
+            logger.info("Fetched {} shared pages for user {}", sharedPages.size(), currentUserEmail);
+
+        } catch (ExecutionException | InterruptedException e) {
+            logger.error("Error fetching dashboard data for user {}: {}", currentUserEmail, e.getMessage(), e);
+            Thread.currentThread().interrupt();
+            model.addAttribute("errorMessage", "Could not load dashboard data. Please try again later.");
+            model.addAttribute("workspaces", Collections.emptyList());
+            model.addAttribute("workspacePageTrees", Collections.emptyMap());
+            model.addAttribute("independentPageNodes", Collections.emptyList());
+            model.addAttribute("sharedPages", Collections.emptyList());
+        } catch (Exception e) {
+            logger.error("Unexpected error fetching dashboard data for user {}: {}", currentUserEmail, e.getMessage(), e);
+            model.addAttribute("errorMessage", "An unexpected error occurred.");
+            model.addAttribute("workspaces", Collections.emptyList());
+            model.addAttribute("workspacePageTrees", Collections.emptyMap());
+            model.addAttribute("independentPageNodes", Collections.emptyList());
+            model.addAttribute("sharedPages", Collections.emptyList());
+        }
+
+        return "dashboard";
+    }
+
+    private String findWorkspaceIdForPage(PageComponent page, Map<String, PageComponent> allPagesMap, Map<String, String> rootPageToWorkspaceIdMap) {
+        if (page == null || page.getPageId() == null) {
+            return null;
+        }
+
+        Set<String> visited = new HashSet<>();
+        PageComponent current = page;
+        String pageId = page.getPageId();
+
+        logger.trace("Finding workspace for page: {}", pageId);
+
+        while (current != null && !visited.contains(current.getPageId())) {
+            String currentId = current.getPageId();
+            visited.add(currentId);
+            logger.trace("Checking page {} in ancestry path", currentId);
+
+            if (rootPageToWorkspaceIdMap.containsKey(currentId)) {
+                String workspaceId = rootPageToWorkspaceIdMap.get(currentId);
+                logger.trace("Page {} is a root page of workspace {}. Assigning.", currentId, workspaceId);
+                return workspaceId;
+            }
+
+            String parentId = current.getParentPageId();
+            if (parentId != null && !parentId.isEmpty()) {
+                current = allPagesMap.get(parentId);
+                if (current == null) {
+                    logger.trace("Parent page {} not found or not accessible. Stopping ancestry search.", parentId);
+                    break;
+                }
+            } else {
+                logger.trace("Page {} has no parent. Stopping ancestry search.", currentId);
+                break;
+            }
+        }
+
+        if (current != null && visited.contains(current.getPageId())) {
+            logger.warn("Cycle detected in parent references starting from page {}. Stopping ancestry search.", page.getPageId());
+        }
+
+        logger.trace("Page {} does not belong to any workspace based on root page ancestry.", page.getPageId());
+        return null;
     }
 
     private String getCurrentUserEmail() {
@@ -75,89 +291,9 @@ public class DashboardController {
             if (principal instanceof UserDetails) {
                 return ((UserDetails) principal).getUsername();
             } else {
-                // Fallback for non-UserDetails principals
                 return authentication.getName();
             }
         }
         return null;
-    }
-
-    @GetMapping
-    public String showDashboard(Model model) {
-        String currentUserEmail = getCurrentUserEmail();
-        if (currentUserEmail == null) {
-            logger.warn("Cannot show dashboard, user not authenticated.");
-            return "redirect:/login?error=session_expired";
-        }
-
-        logger.info("Loading dashboard for user: {}", currentUserEmail);
-        List<PageNode> rootPageNodes = new ArrayList<>(); // List for hierarchical page structure
-        List<Workspace> workspaces = new ArrayList<>(); // List for workspaces
-
-        try {
-            // Fetch all pages accessible by the current user
-            List<PageComponent> allAccessiblePages = pageService.getAllPages();
-            logger.debug("Fetched {} accessible pages for user {}", allAccessiblePages.size(), currentUserEmail);
-
-            // Build hierarchy
-            Map<String, PageNode> nodeMap = new HashMap<>();
-            Map<String, PageComponent> pageMap = allAccessiblePages.stream()
-                    .collect(Collectors.toMap(PageComponent::getPageId, page -> page));
-
-            // Create nodes and identify roots
-            for (PageComponent page : allAccessiblePages) {
-                PageNode node = new PageNode(page);
-                nodeMap.put(page.getPageId(), node);
-
-                String parentId = page.getParentPageId();
-                // A page is a root if it has no parent OR its parent is not in the accessible list
-                if (parentId == null || parentId.isEmpty() || !pageMap.containsKey(parentId)) {
-                    rootPageNodes.add(node);
-                    logger.trace("Identified root page: {} ({})", page.getTitle(), page.getPageId());
-                }
-            }
-
-            // Link children to parents
-            for (PageNode node : nodeMap.values()) {
-                String parentId = node.getPage().getParentPageId();
-                if (parentId != null && !parentId.isEmpty() && nodeMap.containsKey(parentId)) {
-                    PageNode parentNode = nodeMap.get(parentId);
-                    if (parentNode != null) {
-                        parentNode.addChild(node);
-                        logger.trace("Linked child {} to parent {}", node.getPage().getPageId(), parentId);
-                    }
-                }
-            }
-
-            // Sort root nodes and their children recursively
-            Comparator<PageNode> pageNodeComparator = Comparator.comparing(node -> node.getPage().getTitle() != null ? node.getPage().getTitle() : "", String.CASE_INSENSITIVE_ORDER);
-            rootPageNodes.sort(pageNodeComparator);
-            for (PageNode rootNode : rootPageNodes) {
-                rootNode.sortChildrenRecursively(pageNodeComparator);
-            }
-            logger.debug("Built hierarchy with {} root nodes.", rootPageNodes.size());
-
-            // Fetch workspaces
-            workspaces = workspaceService.getWorkspacesForUser(currentUserEmail);
-            logger.debug("User {} is a member of {} workspaces.", currentUserEmail, workspaces.size());
-
-        } catch (ExecutionException | InterruptedException e) {
-            logger.error("Error fetching data for dashboard for user {}: {}", currentUserEmail, e.getMessage(), e);
-            Thread.currentThread().interrupt();
-            model.addAttribute("errorMessage", "Could not load dashboard data. Please try again later.");
-            // Keep lists empty
-        } catch (Exception e) {
-            logger.error("Unexpected error fetching data for dashboard for user {}: {}", currentUserEmail, e.getMessage(), e);
-            model.addAttribute("errorMessage", "An unexpected error occurred while loading dashboard data.");
-        }
-
-        // Sort workspaces alphabetically by name
-        workspaces.sort(Comparator.comparing(Workspace::getName, String.CASE_INSENSITIVE_ORDER));
-
-        model.addAttribute("pageNodes", rootPageNodes); // Pass the hierarchical structure
-        model.addAttribute("workspaces", workspaces);
-        model.addAttribute("currentUserEmail", currentUserEmail);
-
-        return "dashboard";
     }
 }

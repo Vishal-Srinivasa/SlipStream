@@ -14,4 +14,8 @@ public interface PageRepository {
     boolean deletePage(String pageId) throws ExecutionException, InterruptedException;
     boolean updatePage(PageComponent page) throws ExecutionException, InterruptedException;
     List<PageComponent> getPagesByIds(List<String> pageIds) throws ExecutionException, InterruptedException;
+    List<PageComponent> findPagesByOwner(String ownerEmail) throws ExecutionException, InterruptedException;
+    List<PageComponent> findPagesSharedWithUser(String userEmail) throws ExecutionException, InterruptedException;
+    boolean sharePageWithUser(String pageId, String userEmail, String accessLevel) throws ExecutionException, InterruptedException;
+    List<PageComponent> findPagesByWorkspaceIds(List<String> workspaceIds) throws ExecutionException, InterruptedException;
 }

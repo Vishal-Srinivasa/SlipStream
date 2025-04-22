@@ -3,9 +3,13 @@ package com.example.SlipStream.service;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
@@ -17,12 +21,18 @@ import org.springframework.stereotype.Service;
 import com.example.SlipStream.model.ContainerPage;
 import com.example.SlipStream.model.ContentPage;
 import com.example.SlipStream.model.PageComponent;
+import com.example.SlipStream.model.Workspace;
 import com.example.SlipStream.repository.PageRepository;
 import com.example.SlipStream.repository.WorkspaceRepository;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.beans.factory.annotation.Qualifier;
+
+import com.google.cloud.firestore.Query;
+import com.google.cloud.firestore.QuerySnapshot;
+import com.google.cloud.firestore.FieldPath;
 
 @Service
 public class PageService {
@@ -33,7 +43,7 @@ public class PageService {
     private final WorkspaceRepository workspaceRepository;
 
     @Autowired
-    public PageService(PageRepository pageRepository, SimpMessagingTemplate messagingTemplate, WorkspaceRepository workspaceRepository) {
+    public PageService(PageRepository pageRepository, SimpMessagingTemplate messagingTemplate, @Qualifier("firebaseWorkspaceRepository") WorkspaceRepository workspaceRepository) {
         this.pageRepository = pageRepository;
         this.messagingTemplate = messagingTemplate;
         this.workspaceRepository = workspaceRepository;
@@ -511,6 +521,105 @@ public class PageService {
             broadcastPageUpdate(pageId, page);
         }
         return success;
+    }
+
+    public List<PageComponent> getPagesOwnedByUser(String userEmail) throws ExecutionException, InterruptedException {
+        logger.debug("Service: Getting pages owned by user {}", userEmail);
+        return pageRepository.findPagesByOwner(userEmail);
+    }
+
+    public List<PageComponent> getPagesSharedWithUser(String userEmail) throws ExecutionException, InterruptedException {
+        logger.debug("Service: Getting pages shared with user {}", userEmail);
+        return pageRepository.findPagesSharedWithUser(userEmail);
+    }
+
+    /**
+     * Retrieves pages that are shared directly with the specified user, excluding pages they own.
+     *
+     * @param userEmail The email of the user.
+     * @return A list of PageComponent objects shared with the user.
+     * @throws ExecutionException   If Firestore query execution fails.
+     * @throws InterruptedException If the Firestore query thread is interrupted.
+     */
+    public List<PageComponent> getSharedPagesForUser(String userEmail) throws ExecutionException, InterruptedException {
+        logger.debug("Service: Getting pages shared directly with user {}", userEmail);
+        // Now directly calls the repository method which handles the logic including excluding owned pages.
+        return pageRepository.findPagesSharedWithUser(userEmail);
+    }
+
+    /**
+     * Retrieves root pages (no parent) that are accessible by the specified user.
+     * Accessible means the user owns the page OR it's shared with them (and they are not the owner).
+     *
+     * @param userEmail The email of the user.
+     * @return A list of accessible root PageComponent objects.
+     * @throws ExecutionException If there's an error during data retrieval.
+     * @throws InterruptedException If the data retrieval is interrupted.
+     */
+    public List<PageComponent> getRootPagesForUser(String userEmail) throws ExecutionException, InterruptedException {
+        logger.debug("Service: Getting root pages accessible by user {}", userEmail);
+        Set<PageComponent> accessiblePages = new HashSet<>();
+
+        // Get pages owned by the user
+        List<PageComponent> ownedPages = pageRepository.findPagesByOwner(userEmail); // Use repository method
+        accessiblePages.addAll(ownedPages);
+        logger.debug("Found {} pages owned by user {}", ownedPages.size(), userEmail);
+
+        // Get pages shared with the user (excluding owned ones, handled by repository method)
+        List<PageComponent> sharedPages = pageRepository.findPagesSharedWithUser(userEmail); // Use repository method
+        accessiblePages.addAll(sharedPages);
+        logger.debug("Found {} pages shared with user {}", sharedPages.size(), userEmail);
+
+        // Filter for root pages (no parentId)
+        List<PageComponent> rootPages = accessiblePages.stream()
+                .filter(page -> page.getParentPageId() == null || page.getParentPageId().isEmpty())
+                .collect(Collectors.toList());
+
+        logger.info("Found {} unique root pages accessible by user {}", rootPages.size(), userEmail);
+        return rootPages;
+    }
+
+    /**
+     * Fetches all pages accessible by the user, including owned pages
+     * and pages within workspaces they are a member of.
+     * NOTE: Implementation details depend on data access strategy.
+     *
+     * @param userId The email/ID of the user.
+     * @return A list of all accessible PageComponent objects.
+     * @throws ExecutionException   If an error occurs during data fetching.
+     * @throws InterruptedException If the data fetching thread is interrupted.
+     */
+    public List<PageComponent> getAllAccessiblePagesForUser(String userId) throws ExecutionException, InterruptedException {
+        logger.debug("Service: Getting all accessible pages for user {}", userId);
+        Set<PageComponent> accessiblePages = new HashSet<>();
+
+        // 1. Get pages owned by the user
+        List<PageComponent> ownedPages = pageRepository.findPagesByOwner(userId);
+        accessiblePages.addAll(ownedPages);
+        logger.debug("Found {} pages owned by user {}", ownedPages.size(), userId);
+
+        // 2. Get workspaces the user is a member of
+        List<Workspace> userWorkspaces = workspaceRepository.findWorkspacesByUserEmail(userId);
+        List<String> userWorkspaceIds = userWorkspaces.stream()
+                                                    .map(Workspace::getId)
+                                                    .collect(Collectors.toList());
+        logger.debug("User {} is a member of {} workspaces: {}", userId, userWorkspaceIds.size(), userWorkspaceIds);
+
+        // 3. Get pages belonging to those workspaces (if any)
+        if (!userWorkspaceIds.isEmpty()) {
+            // Assuming PageRepository has a method like findPagesByWorkspaceIds
+            // If not, this method needs to be added to PageRepository
+            List<PageComponent> workspacePages = pageRepository.findPagesByWorkspaceIds(userWorkspaceIds);
+            accessiblePages.addAll(workspacePages);
+            logger.debug("Found {} pages belonging to user's workspaces", workspacePages.size());
+        } else {
+            logger.debug("User {} is not part of any workspaces, skipping workspace page fetch.", userId);
+        }
+
+        // 4. Combine and return (HashSet already handles duplicates)
+        List<PageComponent> resultList = new ArrayList<>(accessiblePages);
+        logger.info("Found {} total unique accessible pages for user {}", resultList.size(), userId);
+        return resultList;
     }
 
     private void broadcastPageUpdate(String pageId, PageComponent page) {

@@ -168,4 +168,15 @@ public class FirebaseWorkspaceRepository implements WorkspaceRepository {
         }
         return workspaces;
     }
+
+    @Override
+    public List<Workspace> findWorkspacesByUserEmail(String userEmail) throws ExecutionException, InterruptedException {
+        logger.debug("Repository: Finding workspaces for user email: {}", userEmail);
+        ApiFuture<QuerySnapshot> future = getFirestore().collection(COLLECTION_NAME)
+                .whereArrayContains("members", userEmail)
+                .get();
+        List<Workspace> workspaces = processQuerySnapshot(future);
+        logger.info("Repository: Found {} workspaces for user {}", workspaces.size(), userEmail);
+        return workspaces;
+    }
 }

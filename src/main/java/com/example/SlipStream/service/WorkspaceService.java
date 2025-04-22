@@ -128,7 +128,15 @@ public class WorkspaceService {
             logger.info("User {} is already a member of workspace {}", memberEmail, workspaceId);
             return true;
         }
-        return workspaceRepository.addMemberToWorkspace(workspaceId, memberEmail);
+
+        boolean memberAddedToWorkspace = workspaceRepository.addMemberToWorkspace(workspaceId, memberEmail);
+
+        if (memberAddedToWorkspace) {
+            logger.info("Successfully added member {} to workspace {}.", memberEmail, workspaceId);
+        } else {
+            logger.warn("Failed to add member {} to workspace {} via repository.", memberEmail, workspaceId);
+        }
+        return memberAddedToWorkspace;
     }
 
     public boolean removeMember(String workspaceId, String memberEmail) throws ExecutionException, InterruptedException {
@@ -149,7 +157,11 @@ public class WorkspaceService {
             logger.warn("User {} attempted to remove member {} from workspace {} without permission.", currentUser, memberEmail, workspaceId);
             throw new SecurityException("User does not have permission to remove this member.");
         }
-        return workspaceRepository.removeMemberFromWorkspace(workspaceId, memberEmail);
+        boolean removed = workspaceRepository.removeMemberFromWorkspace(workspaceId, memberEmail);
+        if (removed) {
+            logger.info("Member {} removed from workspace {}.", memberEmail, workspaceId);
+        }
+        return removed;
     }
 
     public boolean deleteWorkspaceAndAssociatedPages(String workspaceId) throws ExecutionException, InterruptedException {

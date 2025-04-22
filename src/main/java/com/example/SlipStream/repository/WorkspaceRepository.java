@@ -28,4 +28,5 @@ public interface WorkspaceRepository {
 
     boolean removeRootPageFromWorkspace(String workspaceId, String pageId) throws ExecutionException, InterruptedException;
 
+    List<Workspace> findWorkspacesByUserEmail(String userEmail) throws ExecutionException, InterruptedException; // New method
 }
