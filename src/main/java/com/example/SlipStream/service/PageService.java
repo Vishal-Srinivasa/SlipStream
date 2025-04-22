@@ -31,15 +31,15 @@ import com.example.SlipStream.repository.PageRepository;
 
 import com.example.SlipStream.repository.WorkspaceRepository;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
+// Add imports for observer classes
+import com.example.SlipStream.service.observer.PageSubject;
+import com.example.SlipStream.service.observer.PageSubjectManager;
+
 import org.springframework.beans.factory.annotation.Qualifier;
 
 import com.google.cloud.firestore.Query;
 import com.google.cloud.firestore.QuerySnapshot;
 import com.google.cloud.firestore.FieldPath;
-
 
 @Service
 public class PageService {
@@ -48,12 +48,14 @@ public class PageService {
     private final PageRepository pageRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final WorkspaceRepository workspaceRepository;
+    private final PageSubjectManager subjectManager; // Add subjectManager field
 
     @Autowired
-    public PageService(PageRepository pageRepository, SimpMessagingTemplate messagingTemplate, @Qualifier("firebaseWorkspaceRepository") WorkspaceRepository workspaceRepository) {
+    public PageService(PageRepository pageRepository, SimpMessagingTemplate messagingTemplate, @Qualifier("firebaseWorkspaceRepository") WorkspaceRepository workspaceRepository, PageSubjectManager subjectManager) { // Add subjectManager to constructor
         this.pageRepository = pageRepository;
         this.messagingTemplate = messagingTemplate;
         this.workspaceRepository = workspaceRepository;
+        this.subjectManager = subjectManager; // Assign subjectManager
 
     }
 
@@ -158,7 +160,7 @@ public class PageService {
 
             boolean updated = pageRepository.updatePage(newContainerPage);
             if (updated) {
-                PageSubject subject = subjectManager.getSubject(parentPageId);
+                PageSubject subject = subjectManager.getSubject(parentPageId); // Now compiles
                 subject.notifyObservers(newContainerPage);
             }
         } else if (parentPage instanceof ContainerPage) {
@@ -174,7 +176,7 @@ public class PageService {
 
                 boolean updated = pageRepository.updatePage(containerParent);
                 if (updated) {
-                    PageSubject subject = subjectManager.getSubject(parentPageId);
+                    PageSubject subject = subjectManager.getSubject(parentPageId); // Now compiles
                     subject.notifyObservers(containerParent);
                 }
             }
@@ -347,7 +349,7 @@ public class PageService {
             boolean success = pageRepository.updatePage(page);
             if (success) {
                 logger.info("Successfully updated page {}", pageId);
-                PageSubject subject = subjectManager.getSubject(pageId);
+                PageSubject subject = subjectManager.getSubject(pageId); // Now compiles
                 subject.notifyObservers(page);
             } else {
                 logger.error("Repository failed to update page {}", pageId);
@@ -434,6 +436,9 @@ public class PageService {
                 messagingTemplate.convertAndSend(destination, pageId);
             }
 
+            PageSubject subject = subjectManager.getSubject(pageId); // Now compiles
+            subjectManager.removeSubjectIfUnused(pageId); // Clean up the subject manager
+
         } else {
              logger.error("Repository failed to delete page {}", pageId);
         }
@@ -481,7 +486,7 @@ public class PageService {
         boolean success = pageRepository.updatePage(page);
         if (success) {
             logger.info("Page {} shared with {} ({} access).", pageId, userEmailToShareWith, accessLevel);
-            PageSubject subject = subjectManager.getSubject(pageId);
+            PageSubject subject = subjectManager.getSubject(pageId); // Now compiles
             subject.notifyObservers(page);
         }
         return success;
@@ -498,7 +503,7 @@ public class PageService {
         boolean success = pageRepository.updatePage(page);
         if (success) {
             logger.info("Sharing removed for user {} from page {}.", userEmailToUnshare, pageId);
-            PageSubject subject = subjectManager.getSubject(pageId);
+            PageSubject subject = subjectManager.getSubject(pageId); // Now compiles
             subject.notifyObservers(page);
         }
         return success;
@@ -515,7 +520,7 @@ public class PageService {
         boolean success = pageRepository.updatePage(page);
         if (success) {
             logger.info("Page {} published successfully.", pageId);
-            PageSubject subject = subjectManager.getSubject(pageId);
+            PageSubject subject = subjectManager.getSubject(pageId); // Now compiles
             subject.notifyObservers(page);
         }
         return success;
@@ -532,7 +537,7 @@ public class PageService {
         boolean success = pageRepository.updatePage(page);
         if (success) {
             logger.info("Page {} unpublished successfully.", pageId);
-            PageSubject subject = subjectManager.getSubject(pageId);
+            PageSubject subject = subjectManager.getSubject(pageId); // Now compiles
             subject.notifyObservers(page);
         }
         return success;
