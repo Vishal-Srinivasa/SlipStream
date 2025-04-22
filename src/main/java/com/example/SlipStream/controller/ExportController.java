@@ -28,15 +28,19 @@ public class ExportController {
     public ResponseEntity<InputStreamResource> exportPageAsPdf(@PathVariable String pageId)
             throws IOException, InterruptedException, ExecutionException {
 
+        // Fetch the root page
         PageComponent rootPage = pageService.getPage(pageId);
         if (rootPage == null) {
             throw new IllegalArgumentException("Page not found");
         }
 
+        // Recursively load children
         expandSubpages(rootPage);
 
+        // Generate the full HTML
         String htmlContent = generateHtmlContent(rootPage);
 
+        // Convert HTML to PDF
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         PdfRendererBuilder builder = new PdfRendererBuilder();
         builder.withHtmlContent(htmlContent, null);
@@ -51,6 +55,7 @@ public class ExportController {
                 .body(new InputStreamResource(inputStream));
     }
 
+    // Expand all subpages recursively
     private void expandSubpages(PageComponent page) throws ExecutionException, InterruptedException {
         if (page.getChildren() != null) {
             for (int i = 0; i < page.getChildren().size(); i++) {
@@ -62,6 +67,7 @@ public class ExportController {
         }
     }
 
+    // Build full HTML with recursive rendering
     private String generateHtmlContent(PageComponent page) {
         StringBuilder htmlBuilder = new StringBuilder();
 
@@ -70,14 +76,15 @@ public class ExportController {
         htmlBuilder.append("<head>");
         htmlBuilder.append("<title>").append(page.getTitle()).append("</title>");
         htmlBuilder.append("<style>");
-        htmlBuilder.append("body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }");
-        htmlBuilder.append("h1, h2, h3 { color: #333; }");
-        htmlBuilder.append(".block { margin-bottom: 1em; white-space: pre-wrap; }");
+        htmlBuilder.append("body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; }");
+        htmlBuilder.append("h1, h2, h3, h4, h5, h6 { color: #333; margin-top: 24px; }");
+        htmlBuilder.append("p { margin-bottom: 10px; }");
+        htmlBuilder.append(".block { margin-bottom: 30px; }");
         htmlBuilder.append("</style>");
         htmlBuilder.append("</head>");
         htmlBuilder.append("<body>");
 
-        renderPageRecursive(htmlBuilder, page, 1);
+        renderPageRecursive(htmlBuilder, page, 1);  // Start with heading level 1
 
         htmlBuilder.append("</body>");
         htmlBuilder.append("</html>");
@@ -85,17 +92,23 @@ public class ExportController {
         return htmlBuilder.toString();
     }
 
+    // Recursively render content and children
     private void renderPageRecursive(StringBuilder builder, PageComponent page, int level) {
         builder.append("<div class='block'>");
         builder.append("<h").append(level).append(">").append(page.getTitle()).append("</h").append(level).append(">");
+
         if (page.getContent() != null && !page.getContent().isEmpty()) {
-            builder.append("<div class='block'>").append(page.getContent().replaceAll("\n", "<br/>")).append("</div>");
+            String[] lines = page.getContent().split("\\r?\\n");
+            for (String line : lines) {
+                builder.append("<p>").append(line).append("</p>");
+            }
         }
+
         builder.append("</div>");
 
         if (page.getChildren() != null && !page.getChildren().isEmpty()) {
             for (PageComponent child : page.getChildren()) {
-                renderPageRecursive(builder, child, Math.min(level + 1, 6)); // Limit heading levels to h6
+                renderPageRecursive(builder, child, Math.min(level + 1, 6));  // Use h1 to h6
             }
         }
     }
