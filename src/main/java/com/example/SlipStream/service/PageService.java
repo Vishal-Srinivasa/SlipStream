@@ -576,6 +576,7 @@ public class PageService {
 
                 children.set(i, fullChild);
             }
+            }}
 
 
     public List<PageComponent> getPagesOwnedByUser(String userEmail) throws ExecutionException, InterruptedException {
