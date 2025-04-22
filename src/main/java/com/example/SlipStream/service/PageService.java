@@ -538,6 +538,41 @@ public class PageService {
         return success;
     }
 
+    public PageComponent getExpandedPageWithSubpages(String pageId) throws ExecutionException, InterruptedException {
+        PageComponent page = pageRepository.getPage(pageId);
+        
+        // Check permissions first
+        String currentUserEmail = getCurrentUserEmail();
+        if (!hasAccess(page, currentUserEmail, "view")) {
+            throw new AccessDeniedException("User " + (currentUserEmail != null ? currentUserEmail : "anonymous") + 
+                                           " does not have view access to page " + pageId);
+        }
+        
+        // Handle different page types
+        if (page instanceof ContainerPage) {
+            ContainerPage containerPage = (ContainerPage) page;
+            fetchSubPagesRecursively(containerPage);
+            return containerPage;
+        } else {
+            return page;
+        }
+    }
+
+    private void fetchSubPagesRecursively(ContainerPage page) throws ExecutionException, InterruptedException {
+        List<PageComponent> children = page.getChildren(); // only valid for ContainerPage
+        if (children != null) {
+            for (int i = 0; i < children.size(); i++) {
+                PageComponent child = children.get(i);
+                PageComponent fullChild = pageRepository.getPage(child.getPageId());
+
+                if (fullChild instanceof ContainerPage) {
+                    fetchSubPagesRecursively((ContainerPage) fullChild);
+                }
+
+                children.set(i, fullChild);
+            }
+
+
     public List<PageComponent> getPagesOwnedByUser(String userEmail) throws ExecutionException, InterruptedException {
         logger.debug("Service: Getting pages owned by user {}", userEmail);
         return pageRepository.findPagesByOwner(userEmail);
@@ -652,6 +687,7 @@ public class PageService {
             messagingTemplate.convertAndSend(destination, updatePayload);
         } catch (Exception e) {
             logger.error("Error broadcasting update for page {}: {}", pageId, e.getMessage(), e);
+
         }
     }
 }
