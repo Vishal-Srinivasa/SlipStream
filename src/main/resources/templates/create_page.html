@@ -12,9 +12,10 @@
         <h1 class="text-2xl font-bold mb-6" th:text="${pageType == 'container' ? 'Create New Container Page' : 'Create New Content Page'}">Create New Page</h1>
 
         <form th:action="@{/view/pages/create}" method="post">
-            <!-- Hidden fields to pass parentId and pageType -->
+            <!-- Hidden fields -->
             <input type="hidden" name="parentId" th:value="${parentId}" />
             <input type="hidden" name="pageType" th:value="${pageType}" />
+            <input type="hidden" name="workspaceId" th:value="${workspaceId}" /> <!-- Added workspaceId -->
 
             <div class="mb-6">
                 <label for="title" class="block text-sm font-medium text-gray-700 mb-1">Title</label>
@@ -23,7 +24,7 @@
             </div>
 
             <div class="flex items-center justify-end space-x-3">
-                <a th:href="${parentId != null ? '/view/pages/' + parentId : '/dashboard'}"
+                <a th:href="${workspaceId != null ? '/workspaces/' + workspaceId : (parentId != null ? '/view/pages/' + parentId : '/dashboard')}"
                    class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300">Cancel</a>
                 <button type="submit"
                         class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">

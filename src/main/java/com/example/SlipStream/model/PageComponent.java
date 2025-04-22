@@ -17,6 +17,7 @@ public abstract class PageComponent {
     protected String parentPageId; // Reference to parent
     protected boolean isPublished; // Flag for public access
     protected Map<String, String> sharingInfo; // Map<UserEmail, AccessLevel("view" or "edit")>
+    private String workspaceId; // Workspace ID
 
     // Default constructor
     public PageComponent() {
@@ -111,6 +112,14 @@ public abstract class PageComponent {
     public void setSharingInfo(Map<String, String> sharingInfo) {
         this.sharingInfo = sharingInfo;
         this.lastUpdated = new Date();
+    }
+
+    public String getWorkspaceId() {
+        return workspaceId;
+    }
+
+    public void setWorkspaceId(String workspaceId) {
+        this.workspaceId = workspaceId;
     }
 
     // Helper methods for sharing

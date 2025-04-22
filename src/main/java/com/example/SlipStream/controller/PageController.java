@@ -45,6 +45,7 @@ public class PageController {
         try {
             String pageId;
             String owner = pageDTO.getOwner();
+            String workspaceId = pageDTO.getWorkspaceId(); // Get workspaceId from DTO
 
             if (owner == null || owner.isEmpty()) {
                 Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -62,24 +63,32 @@ public class PageController {
             if (pageDTO.getType() != null && pageDTO.getType().equals("container")) {
                 pageId = pageService.createContainerPage(
                     pageDTO.getTitle(),
-                    pageDTO.getContent(),
+                    pageDTO.getContent(), // Using content as summary for now
                     pageDTO.getParentPageId(),
-                    owner
+                    owner,
+                    workspaceId // Pass workspaceId
                 );
             } else {
                 pageId = pageService.createContentPage(
                     pageDTO.getTitle(),
                     pageDTO.getContent(),
                     pageDTO.getParentPageId(),
-                    owner
+                    owner,
+                    workspaceId // Pass workspaceId
                 );
             }
 
             return new ResponseEntity<>(pageId, HttpStatus.CREATED);
         } catch (IllegalStateException e) {
+            logger.error("Illegal state during page creation: {}", e.getMessage()); // Add logging
             return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
         } catch (InterruptedException | ExecutionException e) {
+            logger.error("Execution/Interruption error during page creation: {}", e.getMessage(), e); // Add logging
+            Thread.currentThread().interrupt(); // Re-interrupt thread
             return new ResponseEntity<>("Error creating page: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        } catch (Exception e) { // Catch unexpected exceptions
+            logger.error("Unexpected error during page creation: {}", e.getMessage(), e);
+            return new ResponseEntity<>("An unexpected error occurred while creating the page.", HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -257,6 +266,7 @@ public class PageController {
         private String parentPageId;
         private String owner;
         private String type;
+        private String workspaceId; // Add workspaceId field
 
         public String getTitle() {
             return title;
@@ -296,6 +306,14 @@ public class PageController {
 
         public void setType(String type) {
             this.type = type;
+        }
+
+        public String getWorkspaceId() {
+            return workspaceId;
+        }
+
+        public void setWorkspaceId(String workspaceId) {
+            this.workspaceId = workspaceId;
         }
     }
 

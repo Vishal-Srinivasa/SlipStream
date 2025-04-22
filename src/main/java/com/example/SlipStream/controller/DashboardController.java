@@ -1,7 +1,9 @@
 package com.example.SlipStream.controller;
 
 import com.example.SlipStream.model.PageComponent;
+import com.example.SlipStream.model.Workspace;
 import com.example.SlipStream.service.PageService;
+import com.example.SlipStream.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,10 +14,16 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -24,85 +32,268 @@ import java.util.stream.Collectors;
 public class DashboardController {
 
     private static final Logger logger = LoggerFactory.getLogger(DashboardController.class);
+
+    private final WorkspaceService workspaceService;
     private final PageService pageService;
 
+    public static class PageNode {
+        private PageComponent page;
+        private List<PageNode> children;
+
+        public PageNode(PageComponent page) {
+            this.page = page;
+            this.children = new ArrayList<>();
+        }
+
+        public PageComponent getPage() {
+            return page;
+        }
+
+        public List<PageNode> getChildren() {
+            return children;
+        }
+
+        public void addChild(PageNode child) {
+            this.children.add(child);
+        }
+
+        public static List<PageNode> buildTree(List<PageComponent> pages) {
+            if (pages == null || pages.isEmpty()) {
+                return new ArrayList<>();
+            }
+
+            List<PageNode> roots = new ArrayList<>();
+            Map<String, PageNode> nodeMap = new HashMap<>();
+
+            for (PageComponent page : pages) {
+                if (page != null && page.getPageId() != null) {
+                    nodeMap.put(page.getPageId(), new PageNode(page));
+                } else {
+                    logger.warn("Skipping null page or page with null ID during tree build (node map creation).");
+                }
+            }
+
+            for (PageComponent page : pages) {
+                if (page == null || page.getPageId() == null) continue;
+
+                PageNode node = nodeMap.get(page.getPageId());
+                if (node == null) continue;
+
+                String parentId = page.getParentPageId();
+                if (parentId != null && !parentId.isEmpty() && nodeMap.containsKey(parentId)) {
+                    PageNode parentNode = nodeMap.get(parentId);
+                    if (parentNode != null) {
+                        parentNode.addChild(node);
+                    } else {
+                        logger.warn("Page {} has parentId {} which is not in the current tree's page list. Treating as root.", page.getPageId(), parentId);
+                        roots.add(node);
+                    }
+                } else {
+                    roots.add(node);
+                }
+            }
+
+            roots.sort(Comparator.comparing(n -> n.getPage().getTitle() != null ? n.getPage().getTitle() : "", String.CASE_INSENSITIVE_ORDER));
+            sortChildrenRecursive(roots);
+
+            logger.debug("Built tree with {} root nodes.", roots.size());
+            return roots;
+        }
+
+        private static void sortChildrenRecursive(List<PageNode> nodes) {
+            for (PageNode node : nodes) {
+                if (!node.getChildren().isEmpty()) {
+                    node.getChildren().sort(Comparator.comparing(n -> n.getPage().getTitle() != null ? n.getPage().getTitle() : "", String.CASE_INSENSITIVE_ORDER));
+                    sortChildrenRecursive(node.getChildren());
+                }
+            }
+        }
+    }
+
     @Autowired
-    public DashboardController(PageService pageService) {
+    public DashboardController(WorkspaceService workspaceService, PageService pageService) {
+        this.workspaceService = workspaceService;
         this.pageService = pageService;
     }
 
     @GetMapping
-    public String showDashboard(Model model) {
+    public String showDashboard(Model model, RedirectAttributes redirectAttributes) {
         String currentUserEmail = getCurrentUserEmail();
         if (currentUserEmail == null) {
-            logger.warn("Cannot show dashboard, user not authenticated.");
-            // SecurityConfig should redirect to login, but double-check
-            return "redirect:/login?error=session_expired";
+            logger.warn("User not authenticated, redirecting to login.");
+            redirectAttributes.addFlashAttribute("login_error", "Please log in to view the dashboard.");
+            return "redirect:/login";
         }
 
-        logger.info("Loading dashboard for user: {}", currentUserEmail);
-        List<PageComponent> ownedPages = new ArrayList<>();
-        List<PageComponent> sharedPages = new ArrayList<>();
+        model.addAttribute("currentUserEmail", currentUserEmail);
+        model.addAttribute("workspaces", Collections.emptyList());
+        model.addAttribute("workspacePageTrees", Collections.emptyMap());
+        model.addAttribute("independentPageNodes", Collections.emptyList());
+        model.addAttribute("sharedPages", Collections.emptyList());
 
         try {
-            // Fetch all pages - NOTE: This can be inefficient for large numbers of pages.
-            // Consider adding specific repository/service methods like getPagesOwnedBy(email)
-            // and getPagesSharedWith(email) if performance becomes an issue.
-            List<PageComponent> allAccessiblePages = pageService.getAllPages(); // Assuming this gets all pages user might see
+            List<Workspace> workspaces = workspaceService.getWorkspacesForUser(currentUserEmail);
+            model.addAttribute("workspaces", workspaces);
+            logger.info("Fetched {} workspaces for user {}", workspaces.size(), currentUserEmail);
+
+            logger.debug("Attempting to fetch all accessible pages for user {}", currentUserEmail);
+            List<PageComponent> allAccessiblePages = pageService.getAllAccessiblePagesForUser(currentUserEmail);
+            logger.info("Fetched {} total accessible pages for user {}", allAccessiblePages.size(), currentUserEmail);
+
+            Map<String, PageComponent> allPagesMap = allAccessiblePages.stream()
+                .filter(p -> p != null && p.getPageId() != null)
+                .collect(Collectors.toMap(PageComponent::getPageId, p -> p, (p1, p2) -> p1));
+
+            Map<String, String> rootPageToWorkspaceIdMap = new HashMap<>();
+            for (Workspace ws : workspaces) {
+                if (ws.getRootPageIds() != null) {
+                    for (String rootPageId : ws.getRootPageIds()) {
+                        if (rootPageId != null && allPagesMap.containsKey(rootPageId)) {
+                            rootPageToWorkspaceIdMap.put(rootPageId, ws.getId());
+                            logger.trace("Mapped root page {} to workspace {}", rootPageId, ws.getId());
+                        } else {
+                            logger.warn("Workspace {} lists root page ID {} which is null, not accessible, or not found.", ws.getId(), rootPageId);
+                        }
+                    }
+                }
+            }
+            logger.debug("Created root page to workspace ID map with {} entries.", rootPageToWorkspaceIdMap.size());
+
+            Map<String, List<PageComponent>> pagesByWorkspaceId = new HashMap<>();
+            List<PageComponent> independentPages = new ArrayList<>();
+            Set<String> assignedPageIds = new HashSet<>();
 
             for (PageComponent page : allAccessiblePages) {
-                boolean isOwner = page.getOwner() != null && page.getOwner().equals(currentUserEmail);
-                boolean isSharedWithUser = page.getSharingInfo() != null && page.getSharingInfo().containsKey(currentUserEmail);
+                if (page == null || page.getPageId() == null) continue;
 
-                if (isOwner) {
-                    // Add to owned list (even if also shared, owner takes precedence)
-                    ownedPages.add(page);
-                } else if (isSharedWithUser) {
-                    // Add to shared list only if not the owner
-                    sharedPages.add(page);
+                String pageId = page.getPageId();
+                if (assignedPageIds.contains(pageId)) {
+                    continue;
                 }
-                // We could also add publicly published pages user doesn't own/isn't shared with,
-                // but the requirement focused on owned and shared.
+
+                String effectiveWorkspaceId = findWorkspaceIdForPage(page, allPagesMap, rootPageToWorkspaceIdMap);
+
+                if (effectiveWorkspaceId != null) {
+                    pagesByWorkspaceId.computeIfAbsent(effectiveWorkspaceId, k -> new ArrayList<>()).add(page);
+                    assignedPageIds.add(pageId);
+                    logger.trace("Categorized page {} into workspace {}", pageId, effectiveWorkspaceId);
+                }
             }
 
-            logger.debug("User {} owns {} pages and has {} pages shared with them.", currentUserEmail, ownedPages.size(), sharedPages.size());
+            for (PageComponent page : allAccessiblePages) {
+                if (page == null || page.getPageId() == null) continue;
+                String pageId = page.getPageId();
+                if (!assignedPageIds.contains(pageId) && page.getOwner() != null && page.getOwner().equals(currentUserEmail)) {
+                    independentPages.add(page);
+                    logger.trace("Categorized page {} as independent (owned by user)", pageId);
+                }
+            }
+
+            logger.info("Categorized pages: {} workspaces with pages, {} independent pages.",
+                    pagesByWorkspaceId.size(), independentPages.size());
+            logger.debug("Workspace IDs with pages found: {}", pagesByWorkspaceId.keySet());
+            pagesByWorkspaceId.forEach((wsId, pages) -> logger.debug("Workspace {}: {} pages", wsId, pages.size()));
+            logger.debug("Independent pages count: {}", independentPages.size());
+
+            Map<String, List<PageNode>> workspacePageTrees = new HashMap<>();
+            for (Map.Entry<String, List<PageComponent>> entry : pagesByWorkspaceId.entrySet()) {
+                String workspaceId = entry.getKey();
+                List<PageComponent> workspacePages = entry.getValue();
+                if (!workspacePages.isEmpty()) {
+                    logger.debug("Building tree for workspace {}", workspaceId);
+                    List<PageNode> pageNodes = PageNode.buildTree(workspacePages);
+                    workspacePageTrees.put(workspaceId, pageNodes);
+                    logger.info("Built page tree for workspace {} with {} root nodes", workspaceId, pageNodes.size());
+                }
+            }
+            model.addAttribute("workspacePageTrees", workspacePageTrees);
+
+            logger.debug("Building tree for independent pages");
+            List<PageNode> independentPageNodes = PageNode.buildTree(independentPages);
+            model.addAttribute("independentPageNodes", independentPageNodes);
+            logger.info("Built independent page tree with {} root nodes", independentPageNodes.size());
+
+            logger.debug("Adding to model: workspacePageTrees size = {}, independentPageNodes size = {}",
+                    workspacePageTrees.size(), independentPageNodes.size());
+
+            List<PageComponent> sharedPages = pageService.getSharedPagesForUser(currentUserEmail);
+            sharedPages.sort(Comparator.comparing(p -> p.getTitle() != null ? p.getTitle() : "", String.CASE_INSENSITIVE_ORDER));
+            model.addAttribute("sharedPages", sharedPages);
+            logger.info("Fetched {} shared pages for user {}", sharedPages.size(), currentUserEmail);
 
         } catch (ExecutionException | InterruptedException e) {
-            logger.error("Error fetching pages for dashboard for user {}: {}", currentUserEmail, e.getMessage(), e);
-            Thread.currentThread().interrupt(); // Re-interrupt thread
-            model.addAttribute("errorMessage", "Could not load page data. Please try again later.");
-            // Keep ownedPages and sharedPages as empty lists
+            logger.error("Error fetching dashboard data for user {}: {}", currentUserEmail, e.getMessage(), e);
+            Thread.currentThread().interrupt();
+            model.addAttribute("errorMessage", "Could not load dashboard data. Please try again later.");
+            model.addAttribute("workspaces", Collections.emptyList());
+            model.addAttribute("workspacePageTrees", Collections.emptyMap());
+            model.addAttribute("independentPageNodes", Collections.emptyList());
+            model.addAttribute("sharedPages", Collections.emptyList());
         } catch (Exception e) {
-             logger.error("Unexpected error fetching pages for dashboard for user {}: {}", currentUserEmail, e.getMessage(), e);
-             model.addAttribute("errorMessage", "An unexpected error occurred while loading page data.");
+            logger.error("Unexpected error fetching dashboard data for user {}: {}", currentUserEmail, e.getMessage(), e);
+            model.addAttribute("errorMessage", "An unexpected error occurred.");
+            model.addAttribute("workspaces", Collections.emptyList());
+            model.addAttribute("workspacePageTrees", Collections.emptyMap());
+            model.addAttribute("independentPageNodes", Collections.emptyList());
+            model.addAttribute("sharedPages", Collections.emptyList());
         }
 
-
-        // Sort pages alphabetically by title for consistent display
-        ownedPages.sort((p1, p2) -> String.CASE_INSENSITIVE_ORDER.compare(p1.getTitle() != null ? p1.getTitle() : "", p2.getTitle() != null ? p2.getTitle() : ""));
-        sharedPages.sort((p1, p2) -> String.CASE_INSENSITIVE_ORDER.compare(p1.getTitle() != null ? p1.getTitle() : "", p2.getTitle() != null ? p2.getTitle() : ""));
-
-
-        model.addAttribute("ownedPages", ownedPages);
-        model.addAttribute("sharedPages", sharedPages);
-        model.addAttribute("currentUserEmail", currentUserEmail); // Add user email for display
-
-        return "dashboard"; // Name of the Thymeleaf template (dashboard.html)
+        return "dashboard";
     }
 
-    // Helper method to get current user email
+    private String findWorkspaceIdForPage(PageComponent page, Map<String, PageComponent> allPagesMap, Map<String, String> rootPageToWorkspaceIdMap) {
+        if (page == null || page.getPageId() == null) {
+            return null;
+        }
+
+        Set<String> visited = new HashSet<>();
+        PageComponent current = page;
+        String pageId = page.getPageId();
+
+        logger.trace("Finding workspace for page: {}", pageId);
+
+        while (current != null && !visited.contains(current.getPageId())) {
+            String currentId = current.getPageId();
+            visited.add(currentId);
+            logger.trace("Checking page {} in ancestry path", currentId);
+
+            if (rootPageToWorkspaceIdMap.containsKey(currentId)) {
+                String workspaceId = rootPageToWorkspaceIdMap.get(currentId);
+                logger.trace("Page {} is a root page of workspace {}. Assigning.", currentId, workspaceId);
+                return workspaceId;
+            }
+
+            String parentId = current.getParentPageId();
+            if (parentId != null && !parentId.isEmpty()) {
+                current = allPagesMap.get(parentId);
+                if (current == null) {
+                    logger.trace("Parent page {} not found or not accessible. Stopping ancestry search.", parentId);
+                    break;
+                }
+            } else {
+                logger.trace("Page {} has no parent. Stopping ancestry search.", currentId);
+                break;
+            }
+        }
+
+        if (current != null && visited.contains(current.getPageId())) {
+            logger.warn("Cycle detected in parent references starting from page {}. Stopping ancestry search.", page.getPageId());
+        }
+
+        logger.trace("Page {} does not belong to any workspace based on root page ancestry.", page.getPageId());
+        return null;
+    }
+
     private String getCurrentUserEmail() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        // Check principal is not null and not the anonymousUser string
-        if (authentication != null && authentication.isAuthenticated() && authentication.getPrincipal() != null && !"anonymousUser".equals(authentication.getPrincipal().toString())) {
+        if (authentication != null && authentication.isAuthenticated() && !"anonymousUser".equals(authentication.getPrincipal().toString())) {
             Object principal = authentication.getPrincipal();
             if (principal instanceof UserDetails) {
-                return ((UserDetails) principal).getUsername(); // Typically the email
+                return ((UserDetails) principal).getUsername();
             } else {
-                // Fallback if principal is just a String (e.g., from token directly)
                 return authentication.getName();
             }
         }
-        return null; // Return null if not authenticated or principal is anonymous/null
+        return null;
     }
 }
