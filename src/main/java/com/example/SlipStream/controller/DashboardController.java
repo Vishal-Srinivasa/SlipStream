@@ -167,59 +167,57 @@ public class DashboardController {
                 if (page == null || page.getPageId() == null) continue;
 
                 String pageId = page.getPageId();
-                if (page.getParentPageId() == null || page.getParentPageId().isEmpty()) {
-                    String effectiveWorkspaceId = findWorkspaceIdForPage(page, allPagesMap, rootPageToWorkspaceIdMap);
+                String effectiveWorkspaceId = findWorkspaceIdForPage(page, allPagesMap, rootPageToWorkspaceIdMap);
 
-                    if (effectiveWorkspaceId != null) {
-                        pagesByWorkspaceId.computeIfAbsent(effectiveWorkspaceId, k -> new ArrayList<>()).add(page);
-                        assignedPageIds.add(pageId);
-                        logger.trace("Categorized root page {} into workspace {}", pageId, effectiveWorkspaceId);
-                    }
-                }
-            }
-
-            for (PageComponent page : allAccessiblePages) {
-                if (page == null || page.getPageId() == null) continue;
-                String pageId = page.getPageId();
-                if (!assignedPageIds.contains(pageId) &&
-                    (page.getParentPageId() == null || page.getParentPageId().isEmpty()) &&
-                    page.getOwner() != null && page.getOwner().equals(currentUserEmail)) {
+                if (effectiveWorkspaceId != null) {
+                    pagesByWorkspaceId.computeIfAbsent(effectiveWorkspaceId, k -> new ArrayList<>()).add(page);
+                    assignedPageIds.add(pageId);
+                    logger.trace("Categorized page {} (and potential children) into workspace {}", pageId, effectiveWorkspaceId);
+                } else if (page.getOwner() != null && page.getOwner().equals(currentUserEmail) && !assignedPageIds.contains(pageId)) {
                     independentPages.add(page);
-                    logger.trace("Categorized root page {} as independent (owned by user)", pageId);
+                    logger.trace("Categorized page {} as potentially independent (owned by user)", pageId);
+                } else {
+                    logger.trace("Page {} is neither in a workspace nor independently owned by the user (might be shared or child of shared)", pageId);
                 }
             }
 
-            logger.info("Filtered pages: {} workspaces with root pages, {} independent root pages.",
+            logger.info("Categorized pages: {} workspaces with pages, {} potentially independent pages.",
                     pagesByWorkspaceId.size(), independentPages.size());
             logger.debug("Workspace IDs with pages found: {}", pagesByWorkspaceId.keySet());
             pagesByWorkspaceId.forEach((wsId, pages) -> logger.debug("Workspace {}: {} pages", wsId, pages.size()));
-            logger.debug("Independent pages count: {}", independentPages.size());
+            logger.debug("Independent pages count (before tree building): {}", independentPages.size());
 
             Map<String, List<PageNode>> workspacePageTrees = new HashMap<>();
             for (Map.Entry<String, List<PageComponent>> entry : pagesByWorkspaceId.entrySet()) {
                 String workspaceId = entry.getKey();
-                List<PageComponent> workspaceRootPages = entry.getValue();
-                if (!workspaceRootPages.isEmpty()) {
-                    logger.debug("Building tree for workspace {} using only root pages.", workspaceId);
-                    List<PageNode> pageNodes = PageNode.buildTree(workspaceRootPages);
+                List<PageComponent> workspacePages = entry.getValue();
+                if (!workspacePages.isEmpty()) {
+                    logger.debug("Building tree for workspace {} using {} pages.", workspaceId, workspacePages.size());
+                    List<PageNode> pageNodes = PageNode.buildTree(workspacePages);
                     workspacePageTrees.put(workspaceId, pageNodes);
-                    logger.info("Built page tree for workspace {} with {} root nodes (children might be missing)", workspaceId, pageNodes.size());
+                    logger.info("Built page tree for workspace {} with {} root nodes.", workspaceId, pageNodes.size());
                 }
             }
             model.addAttribute("workspacePageTrees", workspacePageTrees);
 
-            logger.debug("Building tree for independent pages using only root pages");
+            logger.debug("Building tree for independent pages using {} pages.", independentPages.size());
             List<PageNode> independentPageNodes = PageNode.buildTree(independentPages);
             model.addAttribute("independentPageNodes", independentPageNodes);
-            logger.info("Built independent page tree with {} root nodes (children might be missing)", independentPageNodes.size());
+            logger.info("Built independent page tree with {} root nodes.", independentPageNodes.size());
 
             logger.debug("Adding to model: workspacePageTrees size = {}, independentPageNodes size = {}",
                     workspacePageTrees.size(), independentPageNodes.size());
 
+            // Fetch shared pages
             List<PageComponent> sharedPages = pageService.getSharedPagesForUser(currentUserEmail);
-            sharedPages.sort(Comparator.comparing(p -> p.getTitle() != null ? p.getTitle() : "", String.CASE_INSENSITIVE_ORDER));
-            model.addAttribute("sharedPages", sharedPages);
             logger.info("Fetched {} shared pages for user {}", sharedPages.size(), currentUserEmail);
+
+            // Sort the fetched shared pages by title
+            sharedPages.sort(Comparator.comparing(p -> p.getTitle() != null ? p.getTitle() : "", String.CASE_INSENSITIVE_ORDER));
+
+            // Add the unfiltered (but sorted) list to the model
+            model.addAttribute("sharedPages", sharedPages);
+            logger.info("Displaying {} shared pages for user {}", sharedPages.size(), currentUserEmail);
 
         } catch (ExecutionException | InterruptedException e) {
             logger.error("Error fetching dashboard data for user {}: {}", currentUserEmail, e.getMessage(), e);

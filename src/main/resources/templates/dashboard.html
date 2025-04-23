@@ -284,11 +284,6 @@
                     </a>
                 </div>
                 <div class="action-buttons">
-                    <a th:if="${!node.page.leaf}"
-                       th:href="@{/view/pages/create(parentId=${node.page.pageId}, workspaceId=${node.page.workspaceId})}"
-                       class="create-page-button mr-2">
-                        <i class="fas fa-plus"></i> Add Child
-                    </a>
                     <button th:if="${node.page.owner != null and currentUserEmail != null and node.page.owner.equals(currentUserEmail)}"
                             th:data-page-id="${node.page.pageId}"
                             th:data-page-title="${node.page.title} ?: 'Untitled Page'"
@@ -299,7 +294,9 @@
                 </div>
             </div>
             <ul th:if="${node.children != null and !#lists.isEmpty(node.children)}">
-                <th:block th:each="childNode : ${node.children}" th:insert="~{:: pageTree(${childNode}, ${level + 1})}" />
+                <th:block th:each="childNode : ${node.children}">
+                    <th:block th:insert="~{:: pageTree(${childNode}, ${level + 1})}" />
+                </th:block>
             </ul>
         </li>
     </th:block>
